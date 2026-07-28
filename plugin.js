@@ -1,620 +1,447 @@
 (function () {
     'use strict';
 
-    // ============================================================
-    // 1. КОНФИГ
-    // ============================================================
-    const CONFIG = {
-        id: 'hdrezka_amnezia',
-        name: 'HDRezka (Amnezia)',
-        baseUrl: 'https://hdrezka.ag',
-        buttonText: 'HDRezka',
-    };
+    if (window.hdrezka_plugin_loaded) return;
+    window.hdrezka_plugin_loaded = true;
 
     // ============================================================
-    // 2. ХРАНИЛИЩЕ
+    // 1. ХРАНИЛИЩЕ И НАСТРОЙКИ (С ВАШИМИ ДАННЫМИ ПО УМОЛЧАНИЮ)
     // ============================================================
-    const Store = {
-        get: (key, def = null) => {
-            try {
-                const val = localStorage.getItem('hdrezka_' + key);
-                return val ? JSON.parse(val) : def;
-            } catch { return def; }
-        },
-        set: (key, val) => {
-            localStorage.setItem('hdrezka_' + key, JSON.stringify(val));
+    const DEFAULT_MIRROR = 'https://hdrezka.ag';
+    const DEFAULT_PROXY = 'http://khk6zwo4:h7n4qa3o9aah@2.26.96.23:26829';
+
+    function getMirror() {
+        try {
+            return localStorage.getItem('hdrezka_mirror') || DEFAULT_MIRROR;
+        } catch {
+            return DEFAULT_MIRROR;
         }
-    };
+    }
+
+    function setMirror(value) {
+        try {
+            let url = (value || DEFAULT_MIRROR).trim().replace(/\/+$/, '');
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                url = 'https://' + url;
+            }
+            localStorage.setItem('hdrezka_mirror', url);
+        } catch {}
+    }
+
+    function getProxy() {
+        try {
+            return localStorage.getItem('hdrezka_proxy') || DEFAULT_PROXY;
+        } catch {
+            return DEFAULT_PROXY;
+        }
+    }
+
+    function setProxy(value) {
+        try {
+            localStorage.setItem('hdrezka_proxy', (value || '').trim());
+        } catch {}
+    }
+
+    function getEnabled() {
+        try {
+            return localStorage.getItem('hdrezka_enabled') !== 'false';
+        } catch {
+            return true;
+        }
+    }
+
+    function setEnabled(value) {
+        try {
+            localStorage.setItem('hdrezka_enabled', value ? 'true' : 'false');
+        } catch {}
+    }
 
     // ============================================================
-    // 3. AMNEZIA — ПОЛУЧЕНИЕ СЕРВЕРОВ
+    // 2. СЕТЕВОЙ МОДУЛЬ И АВТОРИЗАЦИЯ ПРОКСИ
     // ============================================================
-    function getAmneziaServers() {
-        const config = Store.get('config', '');
-        if (!config) return [];
-
-        const servers = [];
-        const lines = config.split('\n');
-        let inPeer = false;
-
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith('#')) continue;
-
-            if (trimmed === '[Peer]') {
-                inPeer = true;
-                continue;
-            }
-            if (trimmed.startsWith('[')) {
-                inPeer = false;
-                continue;
+    function parseProxyUrl(proxyStr) {
+        if (!proxyStr) return { hostUrl: '', headers: {} };
+        
+        try {
+            const urlObj = new URL(proxyStr);
+            const headers = {};
+            
+            // Если в URL прокси указаны логин и пароль (khk6zwo4:h7n4qa3o9aah)
+            if (urlObj.username || urlObj.password) {
+                const auth = btoa(`${decodeURIComponent(urlObj.username)}:${decodeURIComponent(urlObj.password)}`);
+                headers['Proxy-Authorization'] = `Basic ${auth}`;
+                headers['Authorization'] = `Basic ${auth}`;
             }
 
-            if (inPeer && trimmed.startsWith('Endpoint = ')) {
-                const endpoint = trimmed.replace('Endpoint = ', '').trim();
-                const match = endpoint.match(/^([^:]+):(\d+)$/);
+            // Очищаем URL от логина/пароля для передачи в fetch
+            const cleanHost = `${urlObj.protocol}//${urlObj.host}`;
+            return { hostUrl: cleanHost, headers };
+        } catch (e) {
+            return { hostUrl: proxyStr, headers: {} };
+        }
+    }
+
+    function request(path, options = {}) {
+        return new Promise((resolve, reject) => {
+            const mirror = getMirror();
+            const fullTargetUrl = path.startsWith('http') ? path : `${mirror}${path.startsWith('/') ? '' : '/'}${path}`;
+            const proxySetting = getProxy();
+
+            let fetchUrl = fullTargetUrl;
+            let customHeaders = {
+                'X-Requested-With': 'XMLHttpRequest',
+                ...(options.headers || {})
+            };
+
+            if (proxySetting) {
+                const { hostUrl, headers: proxyHeaders } = parseProxyUrl(proxySetting);
+                // Формируем шлюз-запрос к прокси
+                fetchUrl = `${hostUrl.replace(/\/+$/, '')}/?url=${encodeURIComponent(fullTargetUrl)}`;
+                Object.assign(customHeaders, proxyHeaders);
+            }
+
+            fetch(fetchUrl, {
+                method: options.method || 'GET',
+                headers: customHeaders,
+                body: options.body
+            })
+            .then(res => {
+                if (!res.ok) throw new Error('HTTP status ' + res.status);
+                return options.json ? res.json() : res.text();
+            })
+            .then(resolve)
+            .catch(err => {
+                console.error('[HDRezka] Запрос завершился ошибкой:', err);
+                reject(err);
+            });
+        });
+    }
+
+    // ============================================================
+    // 3. ДЕКОДИРОВАНИЕ ССЫЛОК И ПАРСИНГ
+    // ============================================================
+    function decodeStreams(str) {
+        if (!str) return {};
+        try {
+            let clean = str.replace('#h', '');
+            if (clean.startsWith('//_//')) {
+                clean = clean.substring(5);
+            }
+            
+            const bk = (s) => {
+                try {
+                    return decodeURIComponent(atob(s).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+                } catch (e) {
+                    return atob(s);
+                }
+            };
+
+            const streams = {};
+            const items = clean.split(',');
+            
+            items.forEach(item => {
+                const match = item.match(/\[([0-9]+p)\](.*)/);
                 if (match) {
-                    servers.push({
-                        ip: match[1],
-                        port: parseInt(match[2])
+                    const quality = match[1];
+                    let streamUrl = match[2];
+                    
+                    if (!streamUrl.startsWith('http')) {
+                        streamUrl = bk(streamUrl);
+                    }
+                    
+                    const urls = streamUrl.split(' or ');
+                    streams[quality] = urls[0];
+                }
+            });
+            
+            return streams;
+        } catch (err) {
+            console.error('[HDRezka] Ошибка декодирования:', err);
+            return {};
+        }
+    }
+
+    function search(query) {
+        const searchUrl = `/search/?do=search&subaction=search&q=${encodeURIComponent(query)}`;
+        return request(searchUrl).then(html => {
+            const results = [];
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const items = doc.querySelectorAll('.b-content__inline_item');
+
+            items.forEach(item => {
+                const link = item.querySelector('.b-content__inline_item-link a');
+                if (!link) return;
+
+                const title = link.textContent.trim();
+                const href = link.getAttribute('href');
+                const img = item.querySelector('.b-content__inline_item-cover img');
+                const poster = img ? img.getAttribute('src') : '';
+                const info = item.querySelector('.b-content__inline_item-link div');
+                const subtext = info ? info.textContent.trim() : '';
+
+                const idMatch = href.match(/\/(\d+)-/);
+                if (idMatch) {
+                    results.push({
+                        id: idMatch[1],
+                        title: title + (subtext ? ` (${subtext})` : ''),
+                        poster: poster,
+                        url: href
                     });
                 }
-            }
-        }
+            });
 
-        return servers;
-    }
-
-    // ============================================================
-    // 4. ЗАПРОСЫ ЧЕРЕЗ AMNEZIA
-    // ============================================================
-    async function fetchViaAmnezia(url) {
-        const servers = getAmneziaServers();
-        if (servers.length === 0) {
-            throw new Error('Нет серверов Amnezia. Добавьте конфиг в настройках.');
-        }
-
-        const server = servers[Math.floor(Math.random() * servers.length)];
-        const proxy = `http://${server.ip}:${server.port}`;
-        const proxyUrl = proxy + '?url=' + encodeURIComponent(url);
-
-        const response = await fetch(proxyUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-            }
+            return results;
         });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        return await response.text();
     }
 
-    // ============================================================
-    // 5. ПАРСИНГ
-    // ============================================================
-    function parseSearchResults(html) {
-        const results = [];
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
+    function getMediaData(itemUrl) {
+        return request(itemUrl).then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
 
-        const items = doc.querySelectorAll('.b-content__inline_item');
-        items.forEach(item => {
-            const link = item.querySelector('.b-content__inline_item-link a');
-            const title = link?.textContent?.trim() || '';
-            const href = link?.getAttribute('href') || '';
-            const poster = item.querySelector('.b-content__inline_item-cover img')?.getAttribute('src') || '';
+            const idInput = doc.querySelector('#post_id');
+            const id = idInput ? idInput.value : null;
 
-            const id = href.match(/\/(\d+)-/)?.[1] || '';
-            if (id) {
-                results.push({
-                    id: id,
-                    title: title,
-                    poster: poster,
-                    url: href,
-                    source: CONFIG.id,
-                    provider: CONFIG.id
+            if (!id) throw new Error('Не удалось найти ID фильма');
+
+            const translators = [];
+            const translatorEls = doc.querySelectorAll('.b-translators__list .b-translator__item');
+            
+            translatorEls.forEach(el => {
+                translators.push({
+                    id: el.getAttribute('data-translator_id'),
+                    name: el.textContent.trim()
                 });
-            }
+            });
+
+            return {
+                id: id,
+                translators: translators.length ? translators : [{ id: '0', name: 'По умолчанию' }]
+            };
         });
-
-        return results;
     }
 
-    function parsePlayerURL(html) {
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
+    function getStream(id, translatorId) {
+        const formData = new FormData();
+        formData.append('id', id);
+        formData.append('translator_id', translatorId);
+        formData.append('action', 'get_movie');
 
-        const iframe = doc.querySelector('iframe[src*="hdrezka"]');
-        if (iframe) return iframe.getAttribute('src');
+        return request('/ajax/get_cdn_series/?t=' + Date.now(), {
+            method: 'POST',
+            body: formData,
+            json: true
+        }).then(res => {
+            if (!res.success) throw new Error(res.message || 'Не удалось получить поток');
+            
+            const streams = decodeStreams(res.url);
+            const qualities = Object.keys(streams);
+            if (qualities.length === 0) throw new Error('Видео не найдено');
 
-        const video = doc.querySelector('video source');
-        if (video) return video.getAttribute('src');
+            const bestQuality = qualities[qualities.length - 1];
+            return {
+                url: streams[bestQuality],
+                qualities: streams
+            };
+        });
+    }
 
-        const scripts = doc.querySelectorAll('script');
-        for (const script of scripts) {
-            const content = script.textContent || '';
-            const match = content.match(/player\.src\s*=\s*["']([^"']+)["']/);
-            if (match) return match[1];
+    // ============================================================
+    // 4. ВОСПРОИЗВЕДЕНИЕ И ИНТЕРФЕЙС
+    // ============================================================
+    function playMedia(streamData, title, poster) {
+        Lampa.Player.play({
+            url: streamData.url,
+            title: title,
+            poster: poster
+        });
+        
+        Lampa.Player.playlist([
+            {
+                url: streamData.url,
+                title: title,
+                poster: poster
+            }
+        ]);
+    }
+
+    function handleSelectTranslator(item, mediaData) {
+        const translatorItems = mediaData.translators.map(tr => ({
+            title: tr.name,
+            onClick: function() {
+                Lampa.Noty.show('Загрузка видео...');
+                getStream(mediaData.id, tr.id)
+                    .then(streamData => {
+                        playMedia(streamData, item.title, item.poster);
+                    })
+                    .catch(err => {
+                        Lampa.Noty.show('Ошибка: ' + (err.message || err));
+                    });
+            }
+        }));
+
+        if (translatorItems.length === 1) {
+            translatorItems[0].onClick();
+        } else {
+            Lampa.Select.show({
+                title: 'Выберите озвучку',
+                items: translatorItems,
+                onBack: () => Lampa.Controller.toggle('content')
+            });
         }
-
-        return null;
     }
 
-    // ============================================================
-    // 6. ПОИСК НА HDREZKA
-    // ============================================================
-    async function searchOnHDRezka(query) {
-        const url = `${CONFIG.baseUrl}/search/?do=search&subaction=search&q=${encodeURIComponent(query)}`;
-        const html = await fetchViaAmnezia(url);
-        return parseSearchResults(html);
-    }
-
-    // ============================================================
-    // 7. ПОКАЗ РЕЗУЛЬТАТОВ (с выбором)
-    // ============================================================
     function showResults(results, movieTitle) {
         if (!results || results.length === 0) {
-            Lampa.Noty.show('❌ Ничего не найдено на HDRezka');
+            Lampa.Noty.show('Ничего не найдено на HDRezka');
             return;
         }
 
-        if (results.length === 1) {
-            // Сразу воспроизводим
-            Lampa.Player.play({
-                title: results[0].title,
-                poster: results[0].poster,
-                url: results[0].url,
-                source: CONFIG.id,
-                provider: CONFIG.id,
-                id: results[0].id
-            });
-            return;
-        }
-
-        // Показываем список для выбора
         const items = results.map(item => ({
             title: item.title,
-            image: item.poster || '',
-            onClick: () => {
-                Lampa.Player.play({
-                    title: item.title,
-                    poster: item.poster,
-                    url: item.url,
-                    source: CONFIG.id,
-                    provider: CONFIG.id,
-                    id: item.id
-                });
-                Lampa.Controller.toggle('content');
+            image: item.poster,
+            onClick: function() {
+                Lampa.Noty.show('Получение вариантов озвучки...');
+                getMediaData(item.url)
+                    .then(mediaData => {
+                        handleSelectTranslator(item, mediaData);
+                    })
+                    .catch(err => {
+                        Lampa.Noty.show('Ошибка: ' + (err.message || err));
+                    });
             }
         }));
 
         Lampa.Select.show({
-            title: 'Результаты поиска: ' + movieTitle,
+            title: 'HDRezka: ' + movieTitle,
             items: items,
-            onBack: () => {
-                Lampa.Controller.toggle('content');
-            }
+            onBack: () => Lampa.Controller.toggle('content')
         });
     }
 
     // ============================================================
-    // 8. РЕГИСТРАЦИЯ ИСТОЧНИКА В ПЛЕЕРЕ
+    // 5. ВСТРАИВАНИЕ КНОПКИ В КАРТОЧКУ
     // ============================================================
-    function registerPlayerSource() {
-        if (window['hdrezka_source_registered']) return;
-        window['hdrezka_source_registered'] = true;
+    function addButton() {
+        if (!$('.full-start').length || $('.hdrezka-button').length) return;
 
-        Lampa.Player.addSource(CONFIG.id, {
-            name: CONFIG.name,
-            getUrl: async (item) => {
-                if (item.provider !== CONFIG.id && item.source !== CONFIG.id) return null;
+        const titleEl = $('.full-start__title');
+        if (!titleEl.length) return;
 
-                if (item.url && item.url.startsWith('http')) {
-                    return item.url;
-                }
+        const movieTitle = titleEl.text().trim();
+        const container = $('.full-start__buttons');
+        if (!container.length) return;
 
-                try {
-                    const fullUrl = CONFIG.baseUrl + item.url;
-                    const html = await fetchViaAmnezia(fullUrl);
-                    const playerUrl = parsePlayerURL(html);
+        const button = $(
+            '<div class="full-start__button hdrezka-button selector">' +
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">' +
+                    '<rect x="2" y="2" width="20" height="20" rx="2.18"/>' +
+                    '<path d="M7 12h10M12 7v10"/>' +
+                '</svg>' +
+                '<span>HDRezka</span>' +
+            '</div>'
+        );
 
-                    if (playerUrl) {
-                        return playerUrl;
-                    } else {
-                        Lampa.Noty.show('❌ Не найдена ссылка. Возможно, требуется авторизация.');
-                        return null;
-                    }
-                } catch (error) {
-                    Lampa.Noty.show('❌ Ошибка: ' + error.message);
-                    return null;
-                }
-            },
-            onError: (item, error) => {
-                console.error('[HDRezka] Ошибка плеера:', error);
-                Lampa.Noty.show('❌ Ошибка воспроизведения');
-            }
-        });
-
-        console.log('[HDRezka] Источник зарегистрирован');
-    }
-
-    // ============================================================
-    // 9. КНОПКА НА КАРТОЧКЕ ФИЛЬМА
-    // ============================================================
-    function addButtonToCard() {
-        // Проверяем, что карточка открыта
-        const card = $('.full-start');
-        if (!card.length) return;
-
-        // Проверяем, есть ли уже кнопка
-        if ($('.hdrezka-card-button').length) return;
-
-        // Получаем название фильма
-        const titleElement = $('.full-start__title');
-        if (!titleElement.length) return;
-
-        const movieTitle = titleElement.text().trim();
-        if (!movieTitle) return;
-
-        // Находим контейнер с кнопками
-        const buttonsContainer = $('.full-start__buttons');
-        if (!buttonsContainer.length) return;
-
-        // Создаём кнопку
-        const button = $(`
-            <div class="full-start__button hdrezka-card-button selector">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-                    <rect x="2" y="2" width="20" height="20" rx="2.18" fill="none" stroke="currentColor" stroke-width="2"/>
-                    <line x1="8" y1="2" x2="8" y2="22" stroke="currentColor" stroke-width="2"/>
-                    <line x1="16" y1="2" x2="16" y2="22" stroke="currentColor" stroke-width="2"/>
-                    <line x1="2" y1="8" x2="22" y2="8" stroke="currentColor" stroke-width="2"/>
-                    <line x1="2" y1="16" x2="22" y2="16" stroke="currentColor" stroke-width="2"/>
-                    <text x="12" y="17" text-anchor="middle" font-size="9" fill="currentColor" font-weight="bold">HD</text>
-                </svg>
-                <span>HDRezka</span>
-            </div>
-        `);
-
-        // Обработчик клика
         button.on('hover:enter', function() {
-            Lampa.Noty.show('🔍 Поиск на HDRezka...');
+            if (!getEnabled()) {
+                Lampa.Noty.show('Плагин отключён');
+                return;
+            }
 
-            searchOnHDRezka(movieTitle)
-                .then(results => {
-                    showResults(results, movieTitle);
-                })
-                .catch(err => {
-                    Lampa.Noty.show('❌ Ошибка: ' + err.message);
-                });
+            Lampa.Noty.show('Поиск на HDRezka...');
+            search(movieTitle)
+                .then(results => showResults(results, movieTitle))
+                .catch(err => Lampa.Noty.show('Ошибка поиска: ' + (err.message || err)));
         });
 
-        // Добавляем кнопку в контейнер
-        buttonsContainer.append(button);
-        console.log('[HDRezka] Кнопка добавлена на карточку');
+        container.append(button);
     }
 
     // ============================================================
-    // 10. КОМПОНЕНТ ГЛАВНОЙ
+    // 6. РЕГИСТРАЦИЯ НАСТРОЕК В МЕНЮ LAMPA
     // ============================================================
-    function HDRezkaMain(object) {
-        const comp = new Lampa.InteractionMain(object);
+    function addSettings() {
+        if (window.hdrezka_settings_done) return;
+        window.hdrezka_settings_done = true;
 
-        comp.create = function() {
-            this.activity.loader(true);
-
-            fetchViaAmnezia(CONFIG.baseUrl)
-                .then(html => {
-                    const results = parseSearchResults(html);
-                    results.forEach(item => {
-                        item.source = CONFIG.id;
-                        item.provider = CONFIG.id;
-                    });
-
-                    const data = {
-                        results: results,
-                        total_pages: 50,
-                        collection: true,
-                        line_type: 'none',
-                        card_events: {
-                            onEnter: (card, element) => {
-                                Lampa.Player.play({
-                                    title: element.title,
-                                    poster: element.poster,
-                                    url: element.url,
-                                    source: CONFIG.id,
-                                    provider: CONFIG.id,
-                                    id: element.id
-                                });
-                            }
-                        }
-                    };
-
-                    this.build(data);
-                    this.activity.loader(false);
-                })
-                .catch(err => {
-                    this.empty(err.message);
-                });
-        };
-
-        comp.empty = function(er) {
-            this.activity.loader(false);
-            const empty = new Lampa.Empty({
-                descr: typeof er == 'string' ? er : Lampa.Lang.translate('empty_text_two')
+        try {
+            Lampa.SettingsApi.addComponent({
+                component: 'hdrezka',
+                name: 'HDRezka',
+                icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:24px;height:24px;"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="8" y1="2" x2="8" y2="22"/><line x1="16" y1="2" x2="16" y2="22"/></svg>'
             });
-            const container = this.activity.render().find('.activity__body > div')[0];
-            if (container) {
-                container.appendChild(empty.render(true));
-            }
-            this.start = empty.start.bind(empty);
-            this.activity.toggle();
-        };
 
-        return comp;
+            Lampa.SettingsApi.addParam({
+                component: 'hdrezka',
+                param: {
+                    name: 'hdrezka_enabled',
+                    type: 'trigger',
+                    default: true
+                },
+                field: {
+                    name: 'Включить HDRezka',
+                    description: 'Показывать кнопку на карточке фильма'
+                },
+                onChange: value => setEnabled(value === 'true' || value === true)
+            });
+
+            Lampa.SettingsApi.addParam({
+                component: 'hdrezka',
+                param: {
+                    name: 'hdrezka_mirror',
+                    type: 'input',
+                    default: DEFAULT_MIRROR
+                },
+                field: {
+                    name: 'Зеркало HDRezka',
+                    description: 'Основной адрес сайта'
+                },
+                onChange: value => setMirror(value)
+            });
+
+            Lampa.SettingsApi.addParam({
+                component: 'hdrezka',
+                param: {
+                    name: 'hdrezka_proxy',
+                    type: 'input',
+                    default: DEFAULT_PROXY
+                },
+                field: {
+                    name: 'HTTP Прокси с авторизацией',
+                    description: 'Адрес прокси (например http://user:pass@ip:port)'
+                },
+                onChange: value => setProxy(value)
+            });
+
+        } catch (e) {
+            console.warn('[HDRezka] Ошибка меню настроек:', e);
+        }
     }
 
     // ============================================================
-    // 11. КОМПОНЕНТ КАТЕГОРИИ
+    // 7. ЗАПУСК
     // ============================================================
-    function HDRezkaView(object) {
-        const comp = new Lampa.InteractionCategory(object);
+    function start() {
+        addSettings();
 
-        comp.create = function() {
-            this.activity.loader(true);
-
-            const isSearch = object.url && object.url.includes('search=');
-            let url;
-
-            if (isSearch) {
-                const query = decodeURIComponent(object.url.split('search=')[1]);
-                url = `${CONFIG.baseUrl}/search/?do=search&subaction=search&q=${encodeURIComponent(query)}`;
-            } else {
-                url = `${CONFIG.baseUrl}/${object.url}/`;
-                if (object.page && object.page > 1) {
-                    url = `${CONFIG.baseUrl}/${object.url}/page/${object.page}/`;
-                }
+        Lampa.Listener.follow('full', function(e) {
+            if (e.type === 'complite' || e.type === 'open') {
+                setTimeout(addButton, 300);
             }
+        });
 
-            fetchViaAmnezia(url)
-                .then(html => {
-                    const results = parseSearchResults(html);
-                    results.forEach(item => {
-                        item.source = CONFIG.id;
-                        item.provider = CONFIG.id;
-                    });
-
-                    const data = {
-                        results: results,
-                        total_pages: 50,
-                        collection: true,
-                        line_type: 'none',
-                        card_events: {
-                            onEnter: (card, element) => {
-                                Lampa.Player.play({
-                                    title: element.title,
-                                    poster: element.poster,
-                                    url: element.url,
-                                    source: CONFIG.id,
-                                    provider: CONFIG.id,
-                                    id: element.id
-                                });
-                            }
-                        }
-                    };
-
-                    this.build(data);
-                    this.activity.loader(false);
-
-                    // Кнопка поиска
-                    const actions = this.render().find('.head__actions');
-                    if (actions.length && !actions.find('[data-action="hdrezka_search"]').length) {
-                        actions.append(`
-                            <div class="head__action head__settings selector" data-action="hdrezka_search">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;">
-                                    <circle cx="11" cy="11" r="8"/>
-                                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                                </svg>
-                            </div>
-                        `);
-
-                        actions.find('[data-action="hdrezka_search"]').on('hover:enter', () => {
-                            Lampa.Input.edit({
-                                title: 'Поиск на HDRezka',
-                                value: '',
-                                free: true,
-                                nosave: true
-                            }, (value) => {
-                                if (value) {
-                                    Lampa.Activity.push({
-                                        url: 'search=' + encodeURIComponent(value),
-                                        title: 'Поиск: ' + value,
-                                        component: 'hdrezka_view',
-                                        page: 1
-                                    });
-                                }
-                                Lampa.Controller.toggle('content');
-                            });
-                        });
-                    }
-                })
-                .catch(err => {
-                    this.empty(err.message);
-                });
-        };
-
-        comp.empty = function(er) {
-            this.activity.loader(false);
-            const empty = new Lampa.Empty({
-                descr: typeof er == 'string' ? er : Lampa.Lang.translate('empty_text_two')
-            });
-            const container = this.activity.render().find('.activity__body > div')[0];
-            if (container) {
-                container.appendChild(empty.render(true));
-            }
-            this.start = empty.start.bind(empty);
-            this.activity.toggle();
-        };
-
-        comp.nextPageReuest = function(object, resolve, reject) {
-            reject('Пагинация временно отключена');
-        };
-
-        return comp;
+        const observer = new MutationObserver(() => {
+            if ($('.full-start').length) setTimeout(addButton, 200);
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
     }
 
-    // ============================================================
-    // 12. ЗАПУСК ПЛАГИНА
-    // ============================================================
-    function startPlugin() {
-        if (window['plugin_hdrezka_ready']) return;
-        window['plugin_hdrezka_ready'] = true;
-
-        console.log('[HDRezka] Запуск...');
-
-        registerPlayerSource();
-
-        Lampa.Component.add('hdrezka', HDRezkaMain);
-        Lampa.Component.add('hdrezka_view', HDRezkaView);
-
-        // ===== ПУНКТ В МЕНЮ =====
-        function addMenuItem() {
-            const menuItem = $(`
-                <li class="menu__item selector">
-                    <div class="menu__ico">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;">
-                            <rect x="2" y="2" width="20" height="20" rx="2.18"/>
-                            <line x1="8" y1="2" x2="8" y2="22"/>
-                            <line x1="16" y1="2" x2="16" y2="22"/>
-                            <line x1="2" y1="8" x2="22" y2="8"/>
-                            <line x1="2" y1="16" x2="22" y2="16"/>
-                        </svg>
-                    </div>
-                    <div class="menu__text">HDRezka</div>
-                </li>
-            `);
-
-            menuItem.on('hover:enter', function() {
-                Lampa.Activity.push({
-                    url: '',
-                    title: 'HDRezka',
-                    component: 'hdrezka',
-                    page: 1
-                });
-            });
-
-            const menuList = $('.menu .menu__list').eq(0);
-            if (menuList.length) {
-                menuList.append(menuItem);
-                console.log('[HDRezka] Пункт меню добавлен');
-            }
-        }
-
-        // ===== НАСТРОЙКИ =====
-        function addSettings() {
-            if (window.hdrezka_settings_added) return;
-            window.hdrezka_settings_added = true;
-
-            try {
-                Lampa.SettingsApi.addComponent({
-                    component: 'hdrezka',
-                    name: 'HDRezka (Amnezia)',
-                    icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;">
-                        <rect x="2" y="2" width="20" height="20" rx="2.18"/>
-                        <line x1="8" y1="2" x2="8" y2="22"/>
-                        <line x1="16" y1="2" x2="16" y2="22"/>
-                        <line x1="2" y1="8" x2="22" y2="8"/>
-                        <line x1="2" y1="16" x2="22" y2="16"/>
-                    </svg>`
-                });
-
-                Lampa.SettingsApi.addParam({
-                    component: 'hdrezka',
-                    param: {
-                        name: 'hdrezka_config',
-                        type: 'textarea',
-                        default: '',
-                        placeholder: 'Вставьте ваш AmneziaWG 1.5 конфиг...'
-                    },
-                    field: {
-                        name: 'AmneziaWG Конфиг',
-                        description: 'Полный конфиг для подключения к серверам Amnezia'
-                    },
-                    onChange: (value) => {
-                        Store.set('config', value);
-                        console.log('[HDRezka] Конфиг сохранён');
-                    }
-                });
-
-                Lampa.SettingsApi.addParam({
-                    component: 'hdrezka',
-                    param: {
-                        name: 'hdrezka_enabled',
-                        type: 'trigger',
-                        default: true
-                    },
-                    field: {
-                        name: 'Включить HDRezka',
-                        description: 'Показывать HDRezka в меню'
-                    },
-                    onChange: (value) => {
-                        Store.set('enabled', value === 'true');
-                    }
-                });
-
-                console.log('[HDRezka] Настройки добавлены');
-            } catch (e) {
-                console.warn('[HDRezka] Не удалось добавить настройки:', e);
-            }
-        }
-
-        // ===== СЛЕЖЕНИЕ ЗА КАРТОЧКОЙ =====
-        function observeCard() {
-            // Проверяем при каждом изменении DOM
-            const observer = new MutationObserver(function() {
-                if ($('.full-start').length) {
-                    setTimeout(addButtonToCard, 200);
-                }
-            });
-
-            observer.observe(document.body, {
-                childList: true,
-                subtree: true
-            });
-
-            // Первоначальная проверка
-            setTimeout(addButtonToCard, 500);
-
-            // Также следим за событием открытия карточки
-            Lampa.Listener.follow('full', function(e) {
-                if (e.type === 'complite' || e.type === 'open') {
-                    setTimeout(addButtonToCard, 300);
-                }
-            });
-
-            console.log('[HDRezka] Наблюдение за карточкой запущено');
-        }
-
-        // ===== СТАРТ =====
-        if (window.appready) {
-            addMenuItem();
-            addSettings();
-            observeCard();
-        } else {
-            Lampa.Listener.follow('app', function(e) {
-                if (e.type === 'ready') {
-                    addMenuItem();
-                    addSettings();
-                    observeCard();
-                }
-            });
-        }
-
-        console.log('[HDRezka] Плагин готов');
+    if (window.appready) {
+        start();
+    } else {
+        Lampa.Listener.follow('app', function(e) {
+            if (e.type === 'ready') start();
+        });
     }
-
-    startPlugin();
-
 })();
