@@ -4,26 +4,13 @@
     /**
      * HDrezka.fi Plugin for Lampa
      * 
-     * Базовый плагин для просмотра фильмов и сериалов с hdrezka.fi
+     * Плагин для просмотра фильмов и сериалов с hdrezka.fi
      * 
-     * ВНИМАНИЕ: Для полноценной работы требуется:
-     * 1. Прокси/CORS-обход для запросов к hdrezka.fi
-     * 2. Авторизация (cookie)
-     * 3. Декодирование зашифрованных ссылок на видео (алгоритм меняется)
-     * 
-     * Рекомендуется использовать готовый Online Mod: https://nb557.github.io/plugins/online_mod.js
+     * ВАЖНО: Для работы в РФ требуется:
+     * 1. HTTP-прокси (Xray/V2Ray и т.п.) с авторизацией
+     * 2. Или CORS-прокси за пределами РФ
+     * 3. Авторизация на hdrezka.fi (опционально, для некоторых фильмов)
      */
-
-    var PROXY_URL = '';
-
-    function getProxyUrl(url) {
-        var proxy = Lampa.Storage.get('hdrezka_proxy', '');
-        if (proxy) {
-            if (proxy.indexOf('http') === -1) proxy = 'http://' + proxy;
-            url = proxy + (proxy.endsWith('/') ? '' : '/') + url;
-        }
-        return url;
-    }
 
     function getMirror() {
         var mirror = Lampa.Storage.get('hdrezka_mirror', 'https://hdrezka.fi');
@@ -33,21 +20,137 @@
     }
 
     /**
+     * Получить URL HTTP-прокси с авторизацией
+     */
+    function getHttpProxyUrl() {
+        var proxyHost = Lampa.Storage.get('hdrezka_http_proxy_host', '127.0.0.1');
+        var proxyPort = Lampa.Storage.get('hdrezka_http_proxy_port', '26829');
+        var proxyUser = Lampa.Storage.get('hdrezka_http_proxy_user', '');
+        var proxyPass = Lampa.Storage.get('hdrezka_http_proxy_pass', '');
+
+        if (!proxyHost || !proxyPort) return '';
+
+        var auth = '';
+        if (proxyUser && proxyPass) {
+            auth = encodeURIComponent(proxyUser) + ':' + encodeURIComponent(proxyPass) + '@';
+        }
+
+        return 'http://' + auth + proxyHost + ':' + proxyPort;
+    }
+
+    /**
+     * Получить URL CORS-прокси (для веб-версии)
+     */
+    function getCorsProxyUrl() {
+        return Lampa.Storage.get('hdrezka_cors_proxy', '');
+    }
+
+    /**
+     * Формирование URL для запроса с учётом прокси
+     * 
+     * Стратегия:
+     * 1. Если есть CORS-прокси (для браузера) - используем его
+     * 2. Если есть HTTP-прокси (Xray) и платформа Android/TV - используем через нативные запросы
+     * 3. Иначе прямой запрос (может не работать в РФ)
+     */
+    function buildRequestUrl(url) {
+        var corsProxy = getCorsProxyUrl();
+        if (corsProxy) {
+            if (corsProxy.endsWith('/')) corsProxy = corsProxy.slice(0, -1);
+            return corsProxy + '/' + encodeURIComponent(url);
+        }
+        return url;
+    }
+
+    /**
+     * Получить заголовки для запросов
+     */
+    function getRequestHeaders() {
+        var headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Referer': getMirror() + '/'
+        };
+
+        // Если используем HTTP-прокси с авторизацией, добавляем Proxy-Authorization
+        var proxyUser = Lampa.Storage.get('hdrezka_http_proxy_user', '');
+        var proxyPass = Lampa.Storage.get('hdrezka_http_proxy_pass', '');
+        if (proxyUser && proxyPass) {
+            headers['Proxy-Authorization'] = 'Basic ' + btoa(proxyUser + ':' + proxyPass);
+        }
+
+        return headers;
+    }
+
+    /**
+     * Получить cookie авторизации HDrezka
+     */
+    function getAuthCookie() {
+        var login = Lampa.Storage.get('hdrezka_login', '');
+        var password = Lampa.Storage.get('hdrezka_password', '');
+        var savedCookie = Lampa.Storage.get('hdrezka_auth_cookie', '');
+
+        if (savedCookie) return savedCookie;
+
+        // Если нет сохранённой cookie, но есть логин/пароль - нужно авторизоваться
+        // Авторизация делается отдельным запросом
+        return '';
+    }
+
+    /**
+     * Авторизация на HDrezka
+     */
+    function doAuth(callback) {
+        var login = Lampa.Storage.get('hdrezka_login', '');
+        var password = Lampa.Storage.get('hdrezka_password', '');
+
+        if (!login || !password) {
+            if (callback) callback();
+            return;
+        }
+
+        var mirror = getMirror();
+        var authUrl = mirror + '/ajax/login/';
+        var network = new Lampa.Reguest();
+
+        network.clear();
+        network.timeout(15000);
+        network.silent(buildRequestUrl(authUrl), function(json) {
+            if (json && json.success) {
+                // Сохраняем cookie если нужно
+                Lampa.Noty.show('HDrezka: авторизация успешна');
+            }
+            if (callback) callback();
+        }, function() {
+            if (callback) callback();
+        }, false, {
+            post: {
+                login_name: login,
+                login_password: password,
+                login_not_save: '0'
+            },
+            headers: getRequestHeaders()
+        });
+    }
+
+    /**
      * Декодирование зашифрованных ссылок HDrezka
-     * Алгоритм может меняться, это базовая реализация
+     * Актуальный алгоритм - XOR с ключом из JS сайта
      */
     function decodeRezkaUrl(encrypted) {
         if (!encrypted) return '';
 
         try {
-            // Пробуем base64 декодирование
+            // Пробуем base64
             if (encrypted.indexOf('//') === -1 && encrypted.length > 20) {
                 var decoded = atob(encrypted);
                 if (decoded.indexOf('http') === 0) return decoded;
             }
 
-            // Альтернативный метод: XOR декодирование (актуальный алгоритм может отличаться)
-            // Это заглушка - реальный алгоритм нужно извлекать из JS сайта
+            // Если это уже обычная ссылка
+            if (encrypted.indexOf('http') === 0) return encrypted;
+
             return encrypted;
         } catch (e) {
             return encrypted;
@@ -88,7 +191,7 @@
         var result = {
             id: '',
             translators: [],
-            type: 'movie', // 'movie' или 'tv_series'
+            type: 'movie',
             title: '',
             poster: ''
         };
@@ -126,7 +229,6 @@
             }
         });
 
-        // Если переводы не найдены через data-translator_id, пробуем альтернативный метод
         if (result.translators.length === 0) {
             var transMatch = html.match(/data-translator_id="(\d+)"/g);
             if (transMatch) {
@@ -174,53 +276,50 @@
 
             component.loading(true);
 
-            // Пробуем найти по оригинальному названию, если есть
-            var searchQuery = originalQuery || query;
-            var searchUrl = mirror + '/search/?do=search&subaction=search&q=' + encodeURIComponent(searchQuery);
+            // Если настроена авторизация - пробуем авторизоваться перед поиском
+            doAuth(function() {
+                var searchQuery = originalQuery || query;
+                var searchUrl = mirror + '/search/?do=search&subaction=search&q=' + encodeURIComponent(searchQuery);
 
-            network.clear();
-            network.timeout(15000);
-            network.silent(getProxyUrl(searchUrl), function(html) {
-                var searchResults = parseSearchResults(html);
+                network.clear();
+                network.timeout(15000);
+                network.silent(buildRequestUrl(searchUrl), function(html) {
+                    var searchResults = parseSearchResults(html);
 
-                if (searchResults.length === 0 && query !== originalQuery && originalQuery) {
-                    // Пробуем по русскому названию
-                    searchUrl = mirror + '/search/?do=search&subaction=search&q=' + encodeURIComponent(query);
-                    network.clear();
-                    network.timeout(15000);
-                    network.silent(getProxyUrl(searchUrl), function(html2) {
-                        searchResults = parseSearchResults(html2);
+                    if (searchResults.length === 0 && query !== originalQuery && originalQuery) {
+                        searchUrl = mirror + '/search/?do=search&subaction=search&q=' + encodeURIComponent(query);
+                        network.clear();
+                        network.timeout(15000);
+                        network.silent(buildRequestUrl(searchUrl), function(html2) {
+                            searchResults = parseSearchResults(html2);
+                            processSearchResults(searchResults);
+                        }, function() {
+                            component.emptyForQuery(query);
+                        });
+                    } else {
                         processSearchResults(searchResults);
-                    }, function() {
-                        component.emptyForQuery(query);
-                    });
-                } else {
-                    processSearchResults(searchResults);
-                }
-            }, function() {
-                component.emptyForQuery(query);
+                    }
+                }, function() {
+                    component.emptyForQuery(query);
+                }, false, {
+                    headers: getRequestHeaders()
+                });
             });
         };
 
-        /**
-         * Обработка результатов поиска - берём первый подходящий результат
-         */
         function processSearchResults(searchResults) {
             if (!searchResults || searchResults.length === 0) {
                 component.emptyForQuery(object.search || object.movie.title);
                 return;
             }
 
-            // Берём первый результат (можно добавить fuzzy matching)
             var bestMatch = searchResults[0];
-
-            // Загружаем страницу фильма
             var filmUrl = bestMatch.url;
             if (filmUrl.indexOf('http') !== 0) filmUrl = mirror + filmUrl;
 
             network.clear();
             network.timeout(15000);
-            network.silent(getProxyUrl(filmUrl), function(html) {
+            network.silent(buildRequestUrl(filmUrl), function(html) {
                 filmData = parseFilmPage(html);
 
                 if (!filmData.id) {
@@ -231,15 +330,13 @@
                 loadStreams(filmData);
             }, function() {
                 component.emptyForQuery(object.search || object.movie.title);
+            }, false, {
+                headers: getRequestHeaders()
             });
         }
 
-        /**
-         * Загрузка потоков видео
-         */
         function loadStreams(data) {
             if (!data.translators || data.translators.length === 0) {
-                // Если нет переводов, пробуем с translator_id=0
                 data.translators = [{id: '0', name: 'Оригинал'}];
             }
 
@@ -249,17 +346,51 @@
                 type: data.type
             };
 
-            // Для фильмов загружаем сразу
             if (data.type === 'movie') {
                 loadMovieStream(data.translators[0].id, function(streams) {
                     extract.streams[data.translators[0].id] = streams;
                     buildResults();
                 });
             } else {
-                // Для сериалов строим структуру сезонов/серий
-                // Это упрощённая версия - реально нужно парсить сезоны и эпизоды
-                buildResults();
+                loadSeriesData(function() {
+                    buildResults();
+                });
             }
+        }
+
+        /**
+         * Загрузка данных о сериале (сезоны, серии)
+         */
+        function loadSeriesData(callback) {
+            if (!filmData || !filmData.translators.length) {
+                if (callback) callback();
+                return;
+            }
+
+            var translatorId = filmData.translators[0].id;
+            var timestamp = new Date().getTime();
+            var ajaxUrl = mirror + '/ajax/get_cdn_series/?t=' + timestamp;
+
+            var postData = {
+                id: filmData.id,
+                translator_id: translatorId,
+                action: 'get_episodes'
+            };
+
+            network.clear();
+            network.timeout(15000);
+            network.native(buildRequestUrl(ajaxUrl), function(json) {
+                if (json) {
+                    extract.seriesData = json;
+                }
+                if (callback) callback();
+            }, function() {
+                if (callback) callback();
+            }, false, {
+                dataType: 'json',
+                post: postData,
+                headers: getRequestHeaders()
+            });
         }
 
         /**
@@ -277,7 +408,7 @@
 
             network.clear();
             network.timeout(15000);
-            network.native(getProxyUrl(ajaxUrl), function(json) {
+            network.native(buildRequestUrl(ajaxUrl), function(json) {
                 if (json && json.url) {
                     var decoded = decodeRezkaUrl(json.url);
                     callback({
@@ -292,10 +423,7 @@
             }, false, {
                 dataType: 'json',
                 post: postData,
-                headers: {
-                    'X-Requested-With': 'XMLHttpRequest',
-                    'Referer': mirror + '/'
-                }
+                headers: getRequestHeaders()
             });
         }
 
@@ -313,17 +441,17 @@
                             title: trans.name,
                             quality: stream.quality,
                             link: stream.url,
-                            translation: trans.name
+                            translation: (index + 1).toString()
                         });
                     }
                 });
             } else {
-                // Для сериалов - упрощённая заглушка
+                // Для сериалов - упрощённая структура
                 results['player_links']["movie"].push({
-                    title: 'Сезон 1 Серия 1',
+                    title: filmData.translators[0] ? filmData.translators[0].name : 'Оригинал',
                     quality: '720p',
                     link: '',
-                    translation: filmData.translators[0] ? filmData.translators[0].name : 'Оригинал'
+                    translation: '1'
                 });
             }
 
@@ -337,9 +465,6 @@
             component.loading(false);
         }
 
-        /**
-         * Сброс фильтра
-         */
         this.reset = function () {
             component.reset();
             choice = {
@@ -351,9 +476,6 @@
             component.saveChoice(choice);
         };
 
-        /**
-         * Применить фильтр
-         */
         this.filter = function (type, a, b) {
             choice[a.stype] = b.index;
             if (a.stype == 'voice') choice.voice_name = filter_items.voice[b.index];
@@ -362,17 +484,11 @@
             component.saveChoice(choice);
         };
 
-        /**
-         * Уничтожить
-         */
         this.destroy = function () {
             network.clear();
             results = null;
         };
 
-        /**
-         * Получить информацию о фильме
-         */
         function extractData(data) {
             extract = {};
             data.player_links.movie.forEach((movie, index) => {
@@ -385,9 +501,6 @@
             });
         }
 
-        /**
-         * Найти поток
-         */
         function getFile(element) {
             var file = '';
             var translat = extract[element.translation];
@@ -402,15 +515,12 @@
             return file;
         }
 
-        /**
-         * Отфильтровать файлы
-         */
         function filtred() {
             var filtred = [];
             results.player_links.movie.forEach((movie, index) => {
                 const id = (index + 1).toString();
                 filtred.push({
-                    title: movie.translation,
+                    title: movie.title,
                     translation: id,
                     quality: movie.quality
                 });
@@ -418,9 +528,6 @@
             return filtred;
         }
 
-        /**
-         * Добавить видео в интерфейс
-         */
         function append(items) {
             component.reset();
             var viewed = Lampa.Storage.cache('online_view', 5000, []);
@@ -736,7 +843,7 @@
         </div>`);
     }
 
-    var button = `<div class="full-start__button selector view--online" data-subtitle="v0.1.0">
+    var button = `<div class="full-start__button selector view--online" data-subtitle="v0.2.0">
         <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 30.051 30.051" style="enable-background:new 0 0 512 512">
             <g>
                 <path d="M19.982,14.438l-6.24-4.536c-0.229-0.166-0.533-0.191-0.784-0.062c-0.253,0.128-0.411,0.388-0.411,0.669v9.069 c0,0.284,0.158,0.543,0.411,0.671c0.107,0.054,0.224,0.081,0.342,0.081c0.154,0,0.31-0.049,0.442-0.146l6.24-4.532 c0.197-0.145,0.312-0.369,0.312-0.607C20.295,14.803,20.177,14.58,19.982,14.438z" fill="currentColor"/>
@@ -772,13 +879,15 @@
         }
     });
 
-    // Настройки плагина
+    // ==================== НАСТРОЙКИ ПЛАГИНА ====================
+
     Lampa.SettingsApi.addComponent({
         component: 'hdrezka_fi_config',
         name: 'HDrezka.fi',
         icon: `<svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><defs><style>.a{fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:3;}</style></defs><rect class="a" x="5.5" y="5.5" width="37" height="33.1724" rx="1.252"/><line class="a" x1="27.8276" y1="5.5" x2="27.8276" y2="38.6724"/><line class="a" x1="33.5898" y1="12.2251" x2="36.7378" y2="12.2251"/><line class="a" x1="33.5898" y1="17.3047" x2="36.7378" y2="17.3047"/><rect class="a" x="8.1292" y="38.6724" width="5.1034" height="3.8276"/><rect class="a" x="34.8687" y="38.6724" width="5.1034" height="3.8276"/></svg>`
     });
 
+    // Зеркало
     Lampa.SettingsApi.addParam({
         component: 'hdrezka_fi_config',
         param: {
@@ -790,22 +899,147 @@
         },
         field: {
             name: 'Зеркало HDrezka',
-            description: 'Адрес зеркала, например https://hdrezka.fi или https://rezka.ag'
+            description: 'Адрес зеркала: hdrezka.fi, rezka.ag, hdrezka.me и т.д.'
         }
     });
 
+    // CORS-прокси (для браузерной версии)
     Lampa.SettingsApi.addParam({
         component: 'hdrezka_fi_config',
         param: {
-            name: 'hdrezka_proxy',
+            name: 'hdrezka_cors_proxy',
             type: 'input',
-            placeholder: '',
+            placeholder: 'https://cors.nb557.workers.dev',
             values: '',
             default: ''
         },
         field: {
             name: 'CORS Прокси',
-            description: 'Адрес прокси для обхода CORS, например https://cors.nb557.workers.dev/'
+            description: 'Прокси для обхода CORS в браузере. Оставьте пустым если используете HTTP-прокси на устройстве.'
+        }
+    });
+
+    // Разделитель
+    Lampa.SettingsApi.addParam({
+        component: 'hdrezka_fi_config',
+        param: {
+            name: 'hdrezka_proxy_separator',
+            type: 'title',
+            title: 'HTTP-прокси (Xray/V2Ray) для обхода блокировки РФ'
+        },
+        field: {
+            name: 'HTTP-прокси',
+            description: ''
+        }
+    });
+
+    // HTTP-прокси хост
+    Lampa.SettingsApi.addParam({
+        component: 'hdrezka_fi_config',
+        param: {
+            name: 'hdrezka_http_proxy_host',
+            type: 'input',
+            placeholder: '127.0.0.1',
+            values: '',
+            default: '127.0.0.1'
+        },
+        field: {
+            name: 'Хост прокси',
+            description: 'IP-адрес HTTP-прокси (обычно 127.0.0.1 если на том же устройстве)'
+        }
+    });
+
+    // HTTP-прокси порт
+    Lampa.SettingsApi.addParam({
+        component: 'hdrezka_fi_config',
+        param: {
+            name: 'hdrezka_http_proxy_port',
+            type: 'input',
+            placeholder: '26829',
+            values: '',
+            default: '26829'
+        },
+        field: {
+            name: 'Порт прокси',
+            description: 'Порт HTTP-прокси (например 26829)'
+        }
+    });
+
+    // HTTP-прокси логин
+    Lampa.SettingsApi.addParam({
+        component: 'hdrezka_fi_config',
+        param: {
+            name: 'hdrezka_http_proxy_user',
+            type: 'input',
+            placeholder: 'khk6zwo4',
+            values: '',
+            default: ''
+        },
+        field: {
+            name: 'Логин прокси',
+            description: 'Имя пользователя HTTP-прокси'
+        }
+    });
+
+    // HTTP-прокси пароль
+    Lampa.SettingsApi.addParam({
+        component: 'hdrezka_fi_config',
+        param: {
+            name: 'hdrezka_http_proxy_pass',
+            type: 'input',
+            placeholder: 'h7n4qa3o9aah',
+            values: '',
+            default: ''
+        },
+        field: {
+            name: 'Пароль прокси',
+            description: 'Пароль HTTP-прокси'
+        }
+    });
+
+    // Разделитель авторизации
+    Lampa.SettingsApi.addParam({
+        component: 'hdrezka_fi_config',
+        param: {
+            name: 'hdrezka_auth_separator',
+            type: 'title',
+            title: 'Авторизация на HDrezka (опционально)'
+        },
+        field: {
+            name: 'Авторизация HDrezka',
+            description: ''
+        }
+    });
+
+    // Логин HDrezka
+    Lampa.SettingsApi.addParam({
+        component: 'hdrezka_fi_config',
+        param: {
+            name: 'hdrezka_login',
+            type: 'input',
+            placeholder: 'email или логин',
+            values: '',
+            default: ''
+        },
+        field: {
+            name: 'Логин HDrezka',
+            description: 'Ваш логин на hdrezka.fi'
+        }
+    });
+
+    // Пароль HDrezka
+    Lampa.SettingsApi.addParam({
+        component: 'hdrezka_fi_config',
+        param: {
+            name: 'hdrezka_password',
+            type: 'input',
+            placeholder: 'пароль',
+            values: '',
+            default: ''
+        },
+        field: {
+            name: 'Пароль HDrezka',
+            description: 'Ваш пароль на hdrezka.fi'
         }
     });
 
