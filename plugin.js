@@ -1,18 +1,26 @@
+// ============================================================
+// Плагин HDRezka для Lampa
+// Работает через инжект в index.html или как внешний скрипт
+// ============================================================
+
 (function () {
     'use strict';
 
-    // ============================================================
-    // 1. КОНФИГУРАЦИЯ
-    // ============================================================
-    const CONFIG = {
-        id: 'hdrezka_online',
-        name: 'HDRezka (Online)',
-        baseUrl: 'https://hdrezka.ag',
-        buttonText: 'Смотреть на HDRezka'
-    };
+    // Проверка, что плагин уже загружен
+    if (window.hdrezka_plugin_loaded) return;
+    window.hdrezka_plugin_loaded = true;
+
+    console.log('[HDRezka] Загрузка плагина...');
 
     // ============================================================
-    // 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+    // 1. БАЗОВЫЕ НАСТРОЙКИ (как в online_mod.js)
+    // ============================================================
+    var BASE_URL = 'https://hdrezka.ag';
+    var PLUGIN_NAME = 'HDRezka';
+    var PLUGIN_ID = 'hdrezka';
+
+    // ============================================================
+    // 2. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (как в online_mod.js)
     // ============================================================
     function startsWith(str, search) {
         return str.indexOf(search) === 0;
@@ -26,7 +34,7 @@
         if (!link) return link;
         if (link.indexOf('://') !== -1) return link;
         
-        var url = parseURL(referrer || CONFIG.baseUrl);
+        var url = parseURL(referrer || BASE_URL);
         if (startsWith(link, '//')) return url.protocol + link;
         if (startsWith(link, '/')) return url.origin + link;
         if (startsWith(link, '?')) return url.origin + url.pathname + link;
@@ -78,7 +86,7 @@
     }
 
     // ============================================================
-    // 3. ПАРСИНГ HDREZKA
+    // 3. ПАРСИНГ HDREZKA (как в online_mod.js)
     // ============================================================
     function parseSearchResults(html) {
         var results = [];
@@ -106,8 +114,8 @@
                     year: year,
                     url: href,
                     type: isSeries ? 'tv' : 'movie',
-                    source: CONFIG.id,
-                    provider: CONFIG.id
+                    source: PLUGIN_ID,
+                    provider: PLUGIN_ID
                 });
             }
         });
@@ -139,7 +147,7 @@
     }
 
     // ============================================================
-    // 4. ЗАПРОСЫ (без Amnezia, просто через fetch)
+    // 4. ЗАПРОСЫ (как в online_mod.js)
     // ============================================================
     function fetchPage(url, success, error) {
         fetch(url, {
@@ -162,22 +170,22 @@
     }
 
     // ============================================================
-    // 5. РЕГИСТРАЦИЯ ИСТОЧНИКА В ПЛЕЕРЕ
+    // 5. РЕГИСТРАЦИЯ ИСТОЧНИКА В ПЛЕЕРЕ (как в online_mod.js)
     // ============================================================
     function registerPlayerSource() {
-        if (window['hdrezka_online_source']) return;
-        window['hdrezka_online_source'] = true;
+        if (window['hdrezka_source_registered']) return;
+        window['hdrezka_source_registered'] = true;
 
-        Lampa.Player.addSource(CONFIG.id, {
-            name: CONFIG.name,
+        Lampa.Player.addSource(PLUGIN_ID, {
+            name: PLUGIN_NAME,
             getUrl: function(item) {
                 return new Promise(function(resolve, reject) {
-                    if (item.provider !== CONFIG.id && item.source !== CONFIG.id) {
+                    if (item.provider !== PLUGIN_ID && item.source !== PLUGIN_ID) {
                         resolve(null);
                         return;
                     }
 
-                    var fullUrl = CONFIG.baseUrl + item.url;
+                    var fullUrl = BASE_URL + item.url;
                     fetchPage(fullUrl, function(html) {
                         var playerUrl = parsePlayerURL(html);
                         if (playerUrl) {
@@ -202,26 +210,12 @@
     }
 
     // ============================================================
-    // 6. ПОИСК НА HDREZKA
-    // ============================================================
-    function searchOnHDRezka(query, callback) {
-        var url = CONFIG.baseUrl + '/search/?do=search&subaction=search&q=' + encodeURIComponent(query);
-        fetchPage(url, function(html) {
-            var results = parseSearchResults(html);
-            callback(results);
-        }, function(err) {
-            Lampa.Noty.show('❌ Ошибка поиска: ' + err.message);
-            callback([]);
-        });
-    }
-
-    // ============================================================
-    // 7. КНОПКА НА КАРТОЧКЕ (как в online_mod)
+    // 6. ДОБАВЛЕНИЕ КНОПКИ НА КАРТОЧКУ (как в online_mod.js)
     // ============================================================
     function addButton() {
         // Проверяем, что карточка открыта
         if (!$('.full-start').length) return;
-        if ($('.hdrezka-online-button').length) return;
+        if ($('.hdrezka-button').length) return;
 
         var titleEl = $('.full-start__title');
         if (!titleEl.length) return;
@@ -233,7 +227,7 @@
         if (!container.length) return;
 
         var button = $(`
-            <div class="full-start__button hdrezka-online-button selector" style="order:5;">
+            <div class="full-start__button hdrezka-button selector" style="order:5;">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
                     <rect x="2" y="2" width="20" height="20" rx="2.18" fill="none" stroke="currentColor" stroke-width="2"/>
                     <line x1="8" y1="2" x2="8" y2="22" stroke="currentColor" stroke-width="2"/>
@@ -242,13 +236,17 @@
                     <line x1="2" y1="16" x2="22" y2="16" stroke="currentColor" stroke-width="2"/>
                     <text x="12" y="17" text-anchor="middle" font-size="9" fill="currentColor" font-weight="bold">HD</text>
                 </svg>
-                <span>${CONFIG.buttonText}</span>
+                <span>${PLUGIN_NAME}</span>
             </div>
         `);
 
         button.on('hover:enter', function() {
             Lampa.Noty.show('🔍 Поиск на HDRezka...');
-            searchOnHDRezka(movieTitle, function(results) {
+
+            var url = BASE_URL + '/search/?do=search&subaction=search&q=' + encodeURIComponent(movieTitle);
+            fetchPage(url, function(html) {
+                var results = parseSearchResults(html);
+                
                 if (!results || results.length === 0) {
                     Lampa.Noty.show('❌ Ничего не найдено');
                     return;
@@ -259,8 +257,8 @@
                         title: results[0].title,
                         poster: results[0].poster,
                         url: results[0].url,
-                        source: CONFIG.id,
-                        provider: CONFIG.id,
+                        source: PLUGIN_ID,
+                        provider: PLUGIN_ID,
                         id: results[0].id,
                         type: results[0].type
                     });
@@ -277,8 +275,8 @@
                                 title: item.title,
                                 poster: item.poster,
                                 url: item.url,
-                                source: CONFIG.id,
-                                provider: CONFIG.id,
+                                source: PLUGIN_ID,
+                                provider: PLUGIN_ID,
                                 id: item.id,
                                 type: item.type
                             });
@@ -294,6 +292,8 @@
                         Lampa.Controller.toggle('content');
                     }
                 });
+            }, function(err) {
+                Lampa.Noty.show('❌ Ошибка поиска: ' + err.message);
             });
         });
 
@@ -302,9 +302,9 @@
     }
 
     // ============================================================
-    // 8. СЛЕЖЕНИЕ ЗА КАРТОЧКОЙ
+    // 7. СЛЕЖЕНИЕ ЗА КАРТОЧКОЙ (как в online_mod.js)
     // ============================================================
-    function startObserver() {
+    function observeCard() {
         // Событие открытия карточки
         Lampa.Listener.follow('full', function(e) {
             if (e.type === 'complite' || e.type === 'open') {
@@ -328,20 +328,50 @@
     }
 
     // ============================================================
-    // 9. ЗАПУСК
+    // 8. ДОБАВЛЕНИЕ ПУНКТА В МЕНЮ (как в online_mod.js)
+    // ============================================================
+    function addMenuItem() {
+        var menuItem = $(`
+            <li class="menu__item selector">
+                <div class="menu__ico">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:24px;height:24px;">
+                        <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+                        <line x1="8" y1="2" x2="8" y2="22"/>
+                        <line x1="16" y1="2" x2="16" y2="22"/>
+                        <line x1="2" y1="8" x2="22" y2="8"/>
+                        <line x1="2" y1="16" x2="22" y2="16"/>
+                    </svg>
+                </div>
+                <div class="menu__text">${PLUGIN_NAME}</div>
+            </li>
+        `);
+
+        menuItem.on('hover:enter', function() {
+            // Просто открываем сайт в браузере
+            window.open(BASE_URL, '_blank');
+        });
+
+        var list = $('.menu .menu__list').eq(0);
+        if (list.length) {
+            list.append(menuItem);
+            console.log('[HDRezka] Пункт меню добавлен');
+        }
+    }
+
+    // ============================================================
+    // 9. ЗАПУСК (как в online_mod.js)
     // ============================================================
     function start() {
-        if (window['hdrezka_online_ready']) return;
-        window['hdrezka_online_ready'] = true;
-
-        console.log('[HDRezka] Запуск...');
+        console.log('[HDRezka] Старт...');
 
         registerPlayerSource();
-        startObserver();
+        observeCard();
+        addMenuItem();
 
         console.log('[HDRezka] Готов');
     }
 
+    // Ждём готовности Lampa (как в online_mod.js)
     if (window.appready) {
         start();
     } else {
@@ -352,4 +382,5 @@
         });
     }
 
+    console.log('[HDRezka] Загружен');
 })();
