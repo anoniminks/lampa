@@ -5,59 +5,31 @@
     window.hdrezka_plugin_loaded = true;
 
     // ============================================================
-    // 1. ХРАНИЛИЩЕ И НАСТРОЙКИ (С ВАШИМИ ДАННЫМИ ПО УМОЛЧАНИЮ)
+    // 1. ХРАНИЛИЩЕ И НАСТРОЙКИ
     // ============================================================
     const DEFAULT_MIRROR = 'https://hdrezka.ag';
     const DEFAULT_PROXY = 'http://khk6zwo4:h7n4qa3o9aah@2.26.96.23:26829';
 
-    function getMirror() {
-        try {
-            return localStorage.getItem('hdrezka_mirror') || DEFAULT_MIRROR;
-        } catch {
-            return DEFAULT_MIRROR;
+    Lampa.Storage.listener.follow('change', function (e) {
+        if (e.name === 'hdrezka_enabled') {
+            // Реакция на изменение активности
         }
-    }
+    });
 
-    function setMirror(value) {
-        try {
-            let url = (value || DEFAULT_MIRROR).trim().replace(/\/+$/, '');
-            if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                url = 'https://' + url;
-            }
-            localStorage.setItem('hdrezka_mirror', url);
-        } catch {}
+    function getMirror() {
+        return Lampa.Storage.get('hdrezka_mirror', DEFAULT_MIRROR);
     }
 
     function getProxy() {
-        try {
-            return localStorage.getItem('hdrezka_proxy') || DEFAULT_PROXY;
-        } catch {
-            return DEFAULT_PROXY;
-        }
-    }
-
-    function setProxy(value) {
-        try {
-            localStorage.setItem('hdrezka_proxy', (value || '').trim());
-        } catch {}
+        return Lampa.Storage.get('hdrezka_proxy', DEFAULT_PROXY);
     }
 
     function getEnabled() {
-        try {
-            return localStorage.getItem('hdrezka_enabled') !== 'false';
-        } catch {
-            return true;
-        }
-    }
-
-    function setEnabled(value) {
-        try {
-            localStorage.setItem('hdrezka_enabled', value ? 'true' : 'false');
-        } catch {}
+        return Lampa.Storage.get('hdrezka_enabled', true);
     }
 
     // ============================================================
-    // 2. СЕТЕВОЙ МОДУЛЬ И АВТОРИЗАЦИЯ ПРОКСИ
+    // 2. СЕТЕВОЙ МОДУЛЬ (ПРОКСИ И HTTP)
     // ============================================================
     function parseProxyUrl(proxyStr) {
         if (!proxyStr) return { hostUrl: '', headers: {} };
@@ -66,14 +38,12 @@
             const urlObj = new URL(proxyStr);
             const headers = {};
             
-            // Если в URL прокси указаны логин и пароль (khk6zwo4:h7n4qa3o9aah)
             if (urlObj.username || urlObj.password) {
                 const auth = btoa(`${decodeURIComponent(urlObj.username)}:${decodeURIComponent(urlObj.password)}`);
                 headers['Proxy-Authorization'] = `Basic ${auth}`;
                 headers['Authorization'] = `Basic ${auth}`;
             }
 
-            // Очищаем URL от логина/пароля для передачи в fetch
             const cleanHost = `${urlObj.protocol}//${urlObj.host}`;
             return { hostUrl: cleanHost, headers };
         } catch (e) {
@@ -95,7 +65,6 @@
 
             if (proxySetting) {
                 const { hostUrl, headers: proxyHeaders } = parseProxyUrl(proxySetting);
-                // Формируем шлюз-запрос к прокси
                 fetchUrl = `${hostUrl.replace(/\/+$/, '')}/?url=${encodeURIComponent(fullTargetUrl)}`;
                 Object.assign(customHeaders, proxyHeaders);
             }
@@ -111,14 +80,14 @@
             })
             .then(resolve)
             .catch(err => {
-                console.error('[HDRezka] Запрос завершился ошибкой:', err);
+                console.error('[HDRezka] Ошибка запроса:', err);
                 reject(err);
             });
         });
     }
 
     // ============================================================
-    // 3. ДЕКОДИРОВАНИЕ ССЫЛОК И ПАРСИНГ
+    // 3. ПАРСЕР HDREZKA И ДЕКОДЕР ПОТОКОВ
     // ============================================================
     function decodeStreams(str) {
         if (!str) return {};
@@ -203,7 +172,7 @@
             const idInput = doc.querySelector('#post_id');
             const id = idInput ? idInput.value : null;
 
-            if (!id) throw new Error('Не удалось найти ID фильма');
+            if (!id) throw new Error('ID контента не найден');
 
             const translators = [];
             const translatorEls = doc.querySelectorAll('.b-translators__list .b-translator__item');
@@ -233,7 +202,7 @@
             body: formData,
             json: true
         }).then(res => {
-            if (!res.success) throw new Error(res.message || 'Не удалось получить поток');
+            if (!res.success) throw new Error(res.message || 'Ошибка потока');
             
             const streams = decodeStreams(res.url);
             const qualities = Object.keys(streams);
@@ -248,81 +217,74 @@
     }
 
     // ============================================================
-    // 4. ВОСПРОИЗВЕДЕНИЕ И ИНТЕРФЕЙС
+    // 4. ИНТЕРФЕЙС И ВОСПРОИЗВЕДЕНИЕ
     // ============================================================
-    function playMedia(streamData, title, poster) {
-        Lampa.Player.play({
-            url: streamData.url,
-            title: title,
-            poster: poster
-        });
-        
-        Lampa.Player.playlist([
-            {
-                url: streamData.url,
-                title: title,
-                poster: poster
-            }
-        ]);
-    }
-
-    function handleSelectTranslator(item, mediaData) {
-        const translatorItems = mediaData.translators.map(tr => ({
-            title: tr.name,
-            onClick: function() {
-                Lampa.Noty.show('Загрузка видео...');
-                getStream(mediaData.id, tr.id)
-                    .then(streamData => {
-                        playMedia(streamData, item.title, item.poster);
-                    })
-                    .catch(err => {
-                        Lampa.Noty.show('Ошибка: ' + (err.message || err));
-                    });
-            }
-        }));
-
-        if (translatorItems.length === 1) {
-            translatorItems[0].onClick();
-        } else {
-            Lampa.Select.show({
-                title: 'Выберите озвучку',
-                items: translatorItems,
-                onBack: () => Lampa.Controller.toggle('content')
-            });
-        }
-    }
-
-    function showResults(results, movieTitle) {
-        if (!results || results.length === 0) {
-            Lampa.Noty.show('Ничего не найдено на HDRezka');
+    function startSearch(movieTitle) {
+        if (!getEnabled()) {
+            Lampa.Noty.show('Плагин HDRezka отключен в настройках');
             return;
         }
 
-        const items = results.map(item => ({
-            title: item.title,
-            image: item.poster,
-            onClick: function() {
-                Lampa.Noty.show('Получение вариантов озвучки...');
-                getMediaData(item.url)
-                    .then(mediaData => {
-                        handleSelectTranslator(item, mediaData);
-                    })
-                    .catch(err => {
-                        Lampa.Noty.show('Ошибка: ' + (err.message || err));
-                    });
-            }
-        }));
+        Lampa.Noty.show('Поиск на HDRezka...');
+        search(movieTitle)
+            .then(results => {
+                if (!results || results.length === 0) {
+                    Lampa.Noty.show('Ничего не найдено на HDRezka');
+                    return;
+                }
 
-        Lampa.Select.show({
-            title: 'HDRezka: ' + movieTitle,
-            items: items,
-            onBack: () => Lampa.Controller.toggle('content')
-        });
+                const items = results.map(item => ({
+                    title: item.title,
+                    image: item.poster,
+                    onClick: function() {
+                        Lampa.Noty.show('Получение озвучек...');
+                        getMediaData(item.url)
+                            .then(mediaData => {
+                                const trItems = mediaData.translators.map(tr => ({
+                                    title: tr.name,
+                                    onClick: function() {
+                                        Lampa.Noty.show('Загрузка видео...');
+                                        getStream(mediaData.id, tr.id)
+                                            .then(streamData => {
+                                                Lampa.Player.play({
+                                                    url: streamData.url,
+                                                    title: item.title,
+                                                    poster: item.poster
+                                                });
+                                                Lampa.Player.playlist([{
+                                                    url: streamData.url,
+                                                    title: item.title,
+                                                    poster: item.poster
+                                                }]);
+                                            })
+                                            .catch(err => Lampa.Noty.show('Ошибка: ' + (err.message || err)));
+                                    }
+                                }));
+
+                                if (trItems.length === 1) {
+                                    trItems[0].onClick();
+                                } else {
+                                    Lampa.Select.show({
+                                        title: 'Выберите озвучку',
+                                        items: trItems,
+                                        onBack: () => Lampa.Controller.toggle('content')
+                                    });
+                                }
+                            })
+                            .catch(err => Lampa.Noty.show('Ошибка: ' + (err.message || err)));
+                    }
+                }));
+
+                Lampa.Select.show({
+                    title: 'HDRezka: ' + movieTitle,
+                    items: items,
+                    onBack: () => Lampa.Controller.toggle('content')
+                });
+            })
+            .catch(err => Lampa.Noty.show('Ошибка поиска: ' + (err.message || err)));
     }
 
-    // ============================================================
-    // 5. ВСТРАИВАНИЕ КНОПКИ В КАРТОЧКУ
-    // ============================================================
+    // Встраивание кнопки на карточку фильма
     function addButton() {
         if (!$('.full-start').length || $('.hdrezka-button').length) return;
 
@@ -344,22 +306,14 @@
         );
 
         button.on('hover:enter', function() {
-            if (!getEnabled()) {
-                Lampa.Noty.show('Плагин отключён');
-                return;
-            }
-
-            Lampa.Noty.show('Поиск на HDRezka...');
-            search(movieTitle)
-                .then(results => showResults(results, movieTitle))
-                .catch(err => Lampa.Noty.show('Ошибка поиска: ' + (err.message || err)));
+            startSearch(movieTitle);
         });
 
         container.append(button);
     }
 
     // ============================================================
-    // 6. РЕГИСТРАЦИЯ НАСТРОЕК В МЕНЮ LAMPA
+    // 5. КОРРЕКТНАЯ РЕГИСТРАЦИЯ В НАСТРОЙКАХ
     // ============================================================
     function addSettings() {
         if (window.hdrezka_settings_done) return;
@@ -381,9 +335,8 @@
                 },
                 field: {
                     name: 'Включить HDRezka',
-                    description: 'Показывать кнопку на карточке фильма'
-                },
-                onChange: value => setEnabled(value === 'true' || value === true)
+                    description: 'Показывать кнопку источника на карточке'
+                }
             });
 
             Lampa.SettingsApi.addParam({
@@ -395,9 +348,8 @@
                 },
                 field: {
                     name: 'Зеркало HDRezka',
-                    description: 'Основной адрес сайта'
-                },
-                onChange: value => setMirror(value)
+                    description: 'Адрес домена'
+                }
             });
 
             Lampa.SettingsApi.addParam({
@@ -409,18 +361,17 @@
                 },
                 field: {
                     name: 'HTTP Прокси с авторизацией',
-                    description: 'Адрес прокси (например http://user:pass@ip:port)'
-                },
-                onChange: value => setProxy(value)
+                    description: 'Формат: http://user:pass@ip:port'
+                }
             });
 
         } catch (e) {
-            console.warn('[HDRezka] Ошибка меню настроек:', e);
+            console.warn('[HDRezka] Ошибка регистрации настроек:', e);
         }
     }
 
     // ============================================================
-    // 7. ЗАПУСК
+    // 6. ИНИЦИАЛИЗАЦИЯ
     // ============================================================
     function start() {
         addSettings();
