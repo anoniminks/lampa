@@ -5,27 +5,24 @@
     window.hdrezka_plugin_loaded = true;
 
     // ============================================================
-    // 1. КОНФИГУРАЦИЯ (ВАШИ НАСТРОЙКИ)
+    // КОНФИГУРАЦИЯ (ВАШ ПРОКСИ И ЗЕРКАЛО)
     // ============================================================
     const MIRROR_URL = 'https://hdrezka.ag';
     const PROXY_URL = 'http://khk6zwo4:h7n4qa3o9aah@2.26.96.23:26829';
 
     // ============================================================
-    // 2. СЕТЕВОЙ МОДУЛЬ
+    // СЕТЕВОЙ МОДУЛЬ (ОБРАБОТКА PROXY)
     // ============================================================
     function parseProxyUrl(proxyStr) {
         if (!proxyStr) return { hostUrl: '', headers: {} };
-        
         try {
             const urlObj = new URL(proxyStr);
             const headers = {};
-            
             if (urlObj.username || urlObj.password) {
                 const auth = btoa(`${decodeURIComponent(urlObj.username)}:${decodeURIComponent(urlObj.password)}`);
                 headers['Proxy-Authorization'] = `Basic ${auth}`;
                 headers['Authorization'] = `Basic ${auth}`;
             }
-
             const cleanHost = `${urlObj.protocol}//${urlObj.host}`;
             return { hostUrl: cleanHost, headers };
         } catch (e) {
@@ -67,15 +64,13 @@
     }
 
     // ============================================================
-    // 3. ПАРСЕР И ДЕКОДЕР
+    // ПАРСИНГ И ДЕКОДИРОВАНИЕ ССЫЛОК HDREZKA
     // ============================================================
     function decodeStreams(str) {
         if (!str) return {};
         try {
             let clean = str.replace('#h', '');
-            if (clean.startsWith('//_//')) {
-                clean = clean.substring(5);
-            }
+            if (clean.startsWith('//_//')) clean = clean.substring(5);
             
             const bk = (s) => {
                 try {
@@ -93,19 +88,13 @@
                 if (match) {
                     const quality = match[1];
                     let streamUrl = match[2];
-                    
-                    if (!streamUrl.startsWith('http')) {
-                        streamUrl = bk(streamUrl);
-                    }
-                    
+                    if (!streamUrl.startsWith('http')) streamUrl = bk(streamUrl);
                     const urls = streamUrl.split(' or ');
                     streams[quality] = urls[0];
                 }
             });
-            
             return streams;
         } catch (err) {
-            console.error('[HDRezka] Ошибка декодирования:', err);
             return {};
         }
     }
@@ -148,11 +137,10 @@
         return request(itemUrl).then(html => {
             const parser = new DOMParser();
             const doc = parser.parseFromString(html, 'text/html');
-
             const idInput = doc.querySelector('#post_id');
             const id = idInput ? idInput.value : null;
 
-            if (!id) throw new Error('ID контента не найден');
+            if (!id) throw new Error('ID не найден');
 
             const translators = [];
             const translatorEls = doc.querySelectorAll('.b-translators__list .b-translator__item');
@@ -182,26 +170,22 @@
             body: formData,
             json: true
         }).then(res => {
-            if (!res.success) throw new Error(res.message || 'Ошибка потока');
-            
+            if (!res.success) throw new Error(res.message || 'Ошибка получения потока');
             const streams = decodeStreams(res.url);
             const qualities = Object.keys(streams);
             if (qualities.length === 0) throw new Error('Видео не найдено');
-
-            const bestQuality = qualities[qualities.length - 1];
-            return {
-                url: streams[bestQuality],
-                qualities: streams
-            };
+            return { url: streams[qualities[qualities.length - 1]] };
         });
     }
 
     // ============================================================
-    // 4. ИНТЕРФЕЙС И КНОПКА
+    // ИНТЕГРАЦИЯ В МЕНЮ «ИСТОЧНИКИ» (ONLINE)
     // ============================================================
-    function startSearch(movieTitle) {
+    function startSearchHDRezka(object) {
+        const title = object.movie.title || object.movie.name;
         Lampa.Noty.show('Поиск на HDRezka...');
-        search(movieTitle)
+
+        search(title)
             .then(results => {
                 if (!results || results.length === 0) {
                     Lampa.Noty.show('Ничего не найдено на HDRezka');
@@ -212,7 +196,7 @@
                     title: item.title,
                     image: item.poster,
                     onClick: function() {
-                        Lampa.Noty.show('Получение озвучек...');
+                        Lampa.Noty.show('Загрузка озвучек...');
                         getMediaData(item.url)
                             .then(mediaData => {
                                 const trItems = mediaData.translators.map(tr => ({
@@ -251,7 +235,7 @@
                 }));
 
                 Lampa.Select.show({
-                    title: 'HDRezka: ' + movieTitle,
+                    title: 'HDRezka: ' + title,
                     items: items,
                     onBack: () => Lampa.Controller.toggle('content')
                 });
@@ -259,54 +243,41 @@
             .catch(err => Lampa.Noty.show('Ошибка поиска: ' + (err.message || err)));
     }
 
-    function addButton() {
-        if (!$('.full-start').length || $('.hdrezka-button').length) return;
+    // Регистрация кнопки в меню Источники
+    function initHDRezkaSource() {
+        Lampa.Listener.follow('full', function (e) {
+            if (e.type === 'complite') {
+                const render = e.object.activity.render();
+                
+                // Внедряем слушатель нажатия на «Смотреть / Источники»
+                e.object.activity.render().find('.button--play, .full-start__button').on('click hover:enter', function () {
+                    // Ждем открытия бокового меню и добавляем пункт HDRezka PROXY
+                    setTimeout(() => {
+                        if ($('.activity--select').length && !$('.hdrezka-source-item').length) {
+                            const hdrezkaItem = $(
+                                '<div class="select__item selector hdrezka-source-item">' +
+                                    '<div class="select__title">HDRezka (Proxy)</div>' +
+                                    '<div class="select__descr">Смотреть через ваш Xray Прокси</div>' +
+                                '</div>'
+                            );
 
-        const titleEl = $('.full-start__title');
-        if (!titleEl.length) return;
+                            hdrezkaItem.on('hover:enter click', function () {
+                                startSearchHDRezka(e.object);
+                            });
 
-        const movieTitle = titleEl.text().trim();
-        const container = $('.full-start__buttons');
-        if (!container.length) return;
-
-        const button = $(
-            '<div class="full-start__button hdrezka-button selector">' +
-                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">' +
-                    '<rect x="2" y="2" width="20" height="20" rx="2.18"/>' +
-                    '<path d="M7 12h10M12 7v10"/>' +
-                '</svg>' +
-                '<span>HDRezka</span>' +
-            '</div>'
-        );
-
-        button.on('hover:enter', function() {
-            startSearch(movieTitle);
-        });
-
-        container.append(button);
-    }
-
-    // ============================================================
-    // 5. ИНИЦИАЛИЗАЦИЯ
-    // ============================================================
-    function start() {
-        Lampa.Listener.follow('full', function(e) {
-            if (e.type === 'complite' || e.type === 'open') {
-                setTimeout(addButton, 300);
+                            $('.select__body .scroll__content').prepend(hdrezkaItem);
+                        }
+                    }, 100);
+                });
             }
         });
-
-        const observer = new MutationObserver(() => {
-            if ($('.full-start').length) setTimeout(addButton, 200);
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
     }
 
     if (window.appready) {
-        start();
+        initHDRezkaSource();
     } else {
-        Lampa.Listener.follow('app', function(e) {
-            if (e.type === 'ready') start();
+        Lampa.Listener.follow('app', function (e) {
+            if (e.type === 'ready') initHDRezkaSource();
         });
     }
 })();
