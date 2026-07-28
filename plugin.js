@@ -5,31 +5,13 @@
     window.hdrezka_plugin_loaded = true;
 
     // ============================================================
-    // 1. ХРАНИЛИЩЕ И НАСТРОЙКИ
+    // 1. КОНФИГУРАЦИЯ (ВАШИ НАСТРОЙКИ)
     // ============================================================
-    const DEFAULT_MIRROR = 'https://hdrezka.ag';
-    const DEFAULT_PROXY = 'http://khk6zwo4:h7n4qa3o9aah@2.26.96.23:26829';
-
-    Lampa.Storage.listener.follow('change', function (e) {
-        if (e.name === 'hdrezka_enabled') {
-            // Реакция на изменение активности
-        }
-    });
-
-    function getMirror() {
-        return Lampa.Storage.get('hdrezka_mirror', DEFAULT_MIRROR);
-    }
-
-    function getProxy() {
-        return Lampa.Storage.get('hdrezka_proxy', DEFAULT_PROXY);
-    }
-
-    function getEnabled() {
-        return Lampa.Storage.get('hdrezka_enabled', true);
-    }
+    const MIRROR_URL = 'https://hdrezka.ag';
+    const PROXY_URL = 'http://khk6zwo4:h7n4qa3o9aah@2.26.96.23:26829';
 
     // ============================================================
-    // 2. СЕТЕВОЙ МОДУЛЬ (ПРОКСИ И HTTP)
+    // 2. СЕТЕВОЙ МОДУЛЬ
     // ============================================================
     function parseProxyUrl(proxyStr) {
         if (!proxyStr) return { hostUrl: '', headers: {} };
@@ -53,9 +35,7 @@
 
     function request(path, options = {}) {
         return new Promise((resolve, reject) => {
-            const mirror = getMirror();
-            const fullTargetUrl = path.startsWith('http') ? path : `${mirror}${path.startsWith('/') ? '' : '/'}${path}`;
-            const proxySetting = getProxy();
+            const fullTargetUrl = path.startsWith('http') ? path : `${MIRROR_URL}${path.startsWith('/') ? '' : '/'}${path}`;
 
             let fetchUrl = fullTargetUrl;
             let customHeaders = {
@@ -63,8 +43,8 @@
                 ...(options.headers || {})
             };
 
-            if (proxySetting) {
-                const { hostUrl, headers: proxyHeaders } = parseProxyUrl(proxySetting);
+            if (PROXY_URL) {
+                const { hostUrl, headers: proxyHeaders } = parseProxyUrl(PROXY_URL);
                 fetchUrl = `${hostUrl.replace(/\/+$/, '')}/?url=${encodeURIComponent(fullTargetUrl)}`;
                 Object.assign(customHeaders, proxyHeaders);
             }
@@ -87,7 +67,7 @@
     }
 
     // ============================================================
-    // 3. ПАРСЕР HDREZKA И ДЕКОДЕР ПОТОКОВ
+    // 3. ПАРСЕР И ДЕКОДЕР
     // ============================================================
     function decodeStreams(str) {
         if (!str) return {};
@@ -217,14 +197,9 @@
     }
 
     // ============================================================
-    // 4. ИНТЕРФЕЙС И ВОСПРОИЗВЕДЕНИЕ
+    // 4. ИНТЕРФЕЙС И КНОПКА
     // ============================================================
     function startSearch(movieTitle) {
-        if (!getEnabled()) {
-            Lampa.Noty.show('Плагин HDRezka отключен в настройках');
-            return;
-        }
-
         Lampa.Noty.show('Поиск на HDRezka...');
         search(movieTitle)
             .then(results => {
@@ -284,7 +259,6 @@
             .catch(err => Lampa.Noty.show('Ошибка поиска: ' + (err.message || err)));
     }
 
-    // Встраивание кнопки на карточку фильма
     function addButton() {
         if (!$('.full-start').length || $('.hdrezka-button').length) return;
 
@@ -313,69 +287,9 @@
     }
 
     // ============================================================
-    // 5. КОРРЕКТНАЯ РЕГИСТРАЦИЯ В НАСТРОЙКАХ
-    // ============================================================
-    function addSettings() {
-        if (window.hdrezka_settings_done) return;
-        window.hdrezka_settings_done = true;
-
-        try {
-            Lampa.SettingsApi.addComponent({
-                component: 'hdrezka',
-                name: 'HDRezka',
-                icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:24px;height:24px;"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="8" y1="2" x2="8" y2="22"/><line x1="16" y1="2" x2="16" y2="22"/></svg>'
-            });
-
-            Lampa.SettingsApi.addParam({
-                component: 'hdrezka',
-                param: {
-                    name: 'hdrezka_enabled',
-                    type: 'trigger',
-                    default: true
-                },
-                field: {
-                    name: 'Включить HDRezka',
-                    description: 'Показывать кнопку источника на карточке'
-                }
-            });
-
-            Lampa.SettingsApi.addParam({
-                component: 'hdrezka',
-                param: {
-                    name: 'hdrezka_mirror',
-                    type: 'input',
-                    default: DEFAULT_MIRROR
-                },
-                field: {
-                    name: 'Зеркало HDRezka',
-                    description: 'Адрес домена'
-                }
-            });
-
-            Lampa.SettingsApi.addParam({
-                component: 'hdrezka',
-                param: {
-                    name: 'hdrezka_proxy',
-                    type: 'input',
-                    default: DEFAULT_PROXY
-                },
-                field: {
-                    name: 'HTTP Прокси с авторизацией',
-                    description: 'Формат: http://user:pass@ip:port'
-                }
-            });
-
-        } catch (e) {
-            console.warn('[HDRezka] Ошибка регистрации настроек:', e);
-        }
-    }
-
-    // ============================================================
-    // 6. ИНИЦИАЛИЗАЦИЯ
+    // 5. ИНИЦИАЛИЗАЦИЯ
     // ============================================================
     function start() {
-        addSettings();
-
         Lampa.Listener.follow('full', function(e) {
             if (e.type === 'complite' || e.type === 'open') {
                 setTimeout(addButton, 300);
