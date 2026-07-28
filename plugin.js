@@ -2,15 +2,17 @@
     'use strict';
 
     // ============================================================
-    // 1. ПРОВЕРКА, ЧТО ПЛАГИН УЖЕ ЗАГРУЖЕН
+    // 1. КОНФИГУРАЦИЯ
     // ============================================================
-    if (window.__hdrezka_plugin_loaded) return;
-    window.__hdrezka_plugin_loaded = true;
-
-    console.log('[HDRezka] Плагин загружен');
+    const CONFIG = {
+        id: 'hdrezka_amnezia',
+        name: 'HDRezka (Amnezia)',
+        baseUrl: 'https://hdrezka.ag',
+        // Конфиг Amnezia хранится в localStorage под ключом 'amnezia_config'
+    };
 
     // ============================================================
-    // 2. ХРАНИЛИЩЕ (localStorage)
+    // 2. ХРАНИЛИЩЕ
     // ============================================================
     const Store = {
         get: (key, def = null) => {
@@ -64,290 +66,484 @@
     }
 
     // ============================================================
-    // 4. ПОИСК НА HDREZKA ЧЕРЕЗ AMNEZIA
+    // 4. API ДЛЯ РАБОТЫ С HDREZKA
     // ============================================================
-    async function searchOnHDRezka(query) {
-        const servers = getAmneziaServers();
-        if (servers.length === 0) {
-            Lampa.Notify.show('❌ Нет серверов Amnezia. Добавьте конфиг в localStorage.hdrezka_config');
-            return [];
+    class HDRezkaApi {
+        constructor() {
+            this.network = new Lampa.Reguest();
+            this.servers = getAmneziaServers();
+            this.serverIndex = 0;
         }
 
-        // Берём случайный сервер
-        const server = servers[Math.floor(Math.random() * servers.length)];
-        const proxy = `http://${server.ip}:${server.port}`;
-
-        try {
-            const searchUrl = `https://hdrezka.ag/search/?do=search&subaction=search&q=${encodeURIComponent(query)}`;
-            const response = await fetch(proxy + '?url=' + encodeURIComponent(searchUrl), {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            });
-
-            if (!response.ok) return [];
-
-            const html = await response.text();
-            return parseSearchResults(html);
-
-        } catch (error) {
-            console.error('[HDRezka] Ошибка поиска:', error);
-            return [];
-        }
-    }
-
-    function parseSearchResults(html) {
-        const results = [];
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-
-        const items = doc.querySelectorAll('.b-content__inline_item');
-        items.forEach(item => {
-            const link = item.querySelector('.b-content__inline_item-link a');
-            const title = link?.textContent?.trim() || '';
-            const href = link?.getAttribute('href') || '';
-            const poster = item.querySelector('.b-content__inline_item-cover img')?.getAttribute('src') || '';
-
-            const id = href.match(/\/(\d+)-/)?.[1] || '';
-            if (id) {
-                results.push({
-                    id: id,
-                    title: title,
-                    poster: poster,
-                    url: href
-                });
-            }
-        });
-
-        return results;
-    }
-
-    // ============================================================
-    // 5. ПОЛУЧЕНИЕ ССЫЛКИ НА ПЛЕЕР
-    // ============================================================
-    async function getPlayerUrl(item) {
-        const servers = getAmneziaServers();
-        if (servers.length === 0) return null;
-
-        const server = servers[Math.floor(Math.random() * servers.length)];
-        const proxy = `http://${server.ip}:${server.port}`;
-
-        try {
-            const url = `https://hdrezka.ag${item.url}`;
-            const response = await fetch(proxy + '?url=' + encodeURIComponent(url), {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-            });
-
-            if (!response.ok) return null;
-
-            const html = await response.text();
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
-
-            // Ищем iframe
-            const iframe = doc.querySelector('iframe[src*="hdrezka"]');
-            if (iframe) return iframe.getAttribute('src');
-
-            // Ищем video source
-            const video = doc.querySelector('video source');
-            if (video) return video.getAttribute('src');
-
-            return null;
-
-        } catch (error) {
-            console.error('[HDRezka] Ошибка получения плеера:', error);
-            return null;
-        }
-    }
-
-    // ============================================================
-    // 6. ПОКАЗ РЕЗУЛЬТАТОВ
-    // ============================================================
-    function showResults(results, title) {
-        if (results.length === 0) {
-            Lampa.Notify.show('❌ Ничего не найдено на HDRezka');
-            return;
+        // Получить следующий сервер (ротация)
+        getNextServer() {
+            if (this.servers.length === 0) return null;
+            const server = this.servers[this.serverIndex % this.servers.length];
+            this.serverIndex = (this.serverIndex + 1) % this.servers.length;
+            return server;
         }
 
-        if (results.length === 1) {
-            playOnHDRezka(results[0]);
-            return;
-        }
-
-        // Создаём модалку с выбором
-        var modal = $(`
-            <div class="modal" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:9999;display:flex;align-items:center;justify-content:center;">
-                <div style="background:#1a1a1a;border-radius:12px;padding:20px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-                        <h2 style="color:#fff;font-size:20px;margin:0;">Результаты поиска</h2>
-                        <button onclick="$(this).closest('.modal').remove()" style="background:none;border:none;color:#fff;font-size:24px;cursor:pointer;">✕</button>
-                    </div>
-                    <div id="hdrezka_results"></div>
-                </div>
-            </div>
-        `);
-
-        $('body').append(modal);
-
-        var container = modal.find('#hdrezka_results');
-        results.forEach(item => {
-            var div = $(`
-                <div style="display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid #333;cursor:pointer;" data-item='${JSON.stringify(item)}'>
-                    <img src="${item.poster}" style="width:60px;height:80px;object-fit:cover;border-radius:4px;" onerror="this.style.display='none'">
-                    <div style="flex:1;">
-                        <div style="color:#fff;font-size:16px;">${item.title}</div>
-                    </div>
-                    <div style="color:#ff6b6b;">▶</div>
-                </div>
-            `);
-
-            div.on('click', function() {
-                const data = $(this).data('item');
-                modal.remove();
-                playOnHDRezka(data);
-            });
-
-            container.append(div);
-        });
-    }
-
-    // ============================================================
-    // 7. ВОСПРОИЗВЕДЕНИЕ
-    // ============================================================
-    async function playOnHDRezka(item) {
-        Lampa.Notify.show('🎬 Загрузка плеера...');
-
-        try {
-            const playerUrl = await getPlayerUrl(item);
-
-            if (playerUrl) {
-                // Открываем в плеере Lampa
-                if (window.Lampa && Lampa.Player) {
-                    Lampa.Player.playExternal(playerUrl, {
-                        title: item.title,
-                        poster: item.poster
-                    });
-                } else {
-                    window.open(playerUrl, '_blank');
-                }
-            } else {
-                // Если не нашли плеер — открываем страницу фильма
-                Lampa.Notify.show('📱 Открываем страницу фильма');
-                window.open(`https://hdrezka.ag${item.url}`, '_blank');
-            }
-
-        } catch (error) {
-            console.error('[HDRezka] Ошибка:', error);
-            Lampa.Notify.show('❌ Ошибка воспроизведения');
-        }
-    }
-
-    // ============================================================
-    // 8. ДОБАВЛЕНИЕ КНОПКИ НА КАРТОЧКУ
-    // ============================================================
-    function addHDRezkaButton() {
-        // Проверяем, есть ли уже кнопка
-        if ($('.hdrezka-button').length) return;
-
-        var container = $('.full-start__buttons');
-        if (!container.length) return;
-
-        var button = $(`
-            <div class="full-start__button hdrezka-button" style="order:5;">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-                    <path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-10 7H8v-2h3V8l4 4-4 4v-3z" fill="currentColor"/>
-                </svg>
-                <span>HDRezka</span>
-            </div>
-        `);
-
-        button.on('hover:enter', function() {
-            var title = $('.full-start__title').text().trim();
-            if (!title) {
-                Lampa.Notify.show('❌ Не удалось определить название');
+        // Запрос через Amnezia-прокси
+        request(url, success, error) {
+            const server = this.getNextServer();
+            if (!server) {
+                error('Нет доступных серверов Amnezia');
                 return;
             }
 
-            Lampa.Notify.show('🔍 Поиск на HDRezka...');
-            searchOnHDRezka(title).then(results => {
-                showResults(results, title);
-            });
-        });
+            const proxy = `http://${server.ip}:${server.port}`;
+            const proxyUrl = proxy + '?url=' + encodeURIComponent(url);
 
-        container.append(button);
-        console.log('[HDRezka] Кнопка добавлена');
+            this.network.silent(proxyUrl, (data) => {
+                success(data);
+            }, (err) => {
+                error(err);
+            });
+        }
+
+        // Получить HTML страницы
+        getHtml(url, success, error) {
+            this.request(url, (data) => {
+                success(data);
+            }, error);
+        }
+
+        // Поиск
+        search(query, page, success, error) {
+            const url = `${CONFIG.baseUrl}/search/?do=search&subaction=search&q=${encodeURIComponent(query)}`;
+            if (page > 1) {
+                // HDRezka использует пагинацию через ?page=N
+                this.getHtml(url + '&page=' + page, success, error);
+            } else {
+                this.getHtml(url, success, error);
+            }
+        }
+
+        // Получение категории (главная, фильмы, сериалы и т.д.)
+        getCategory(category, page, success, error) {
+            const url = `${CONFIG.baseUrl}/${category}/`;
+            if (page > 1) {
+                this.getHtml(url + 'page/' + page + '/', success, error);
+            } else {
+                this.getHtml(url, success, error);
+            }
+        }
+
+        // Получение деталей фильма (для плеера)
+        getDetails(url, success, error) {
+            this.getHtml(url, success, error);
+        }
+
+        // Очистка
+        clear() {
+            this.network.clear();
+        }
     }
 
     // ============================================================
-    // 9. НАСТРОЙКИ В МЕНЮ LAMPA
+    // 5. УТИЛИТЫ
     // ============================================================
-    function addSettings() {
-        // Добавляем пункт в меню настроек (если есть Lampa.SettingsApi)
-        if (window.Lampa && Lampa.SettingsApi) {
+    const Utils = {
+        // Парсинг результатов поиска/категории
+        parseResults(html) {
+            const results = [];
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            const items = doc.querySelectorAll('.b-content__inline_item');
+            items.forEach(item => {
+                const link = item.querySelector('.b-content__inline_item-link a');
+                const title = link?.textContent?.trim() || '';
+                const href = link?.getAttribute('href') || '';
+                const poster = item.querySelector('.b-content__inline_item-cover img')?.getAttribute('src') || '';
+                const year = item.querySelector('.b-content__inline_item-link .year')?.textContent?.trim() || '';
+
+                const id = href.match(/\/(\d+)-/)?.[1] || '';
+                const isSeries = href.includes('/series/');
+
+                if (id) {
+                    results.push({
+                        id: id,
+                        title: title,
+                        poster: poster,
+                        year: year,
+                        url: href,
+                        type: isSeries ? 'tv' : 'movie'
+                    });
+                }
+            });
+
+            return results;
+        },
+
+        // Парсинг страницы с деталями (для плеера)
+        parseDetails(html) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            let playerUrl = null;
+            const iframe = doc.querySelector('iframe[src*="hdrezka"]');
+            if (iframe) {
+                playerUrl = iframe.getAttribute('src');
+            }
+
+            if (!playerUrl) {
+                const video = doc.querySelector('video source');
+                if (video) {
+                    playerUrl = video.getAttribute('src');
+                }
+            }
+
+            if (!playerUrl) {
+                const scripts = doc.querySelectorAll('script');
+                for (const script of scripts) {
+                    const content = script.textContent || '';
+                    const match = content.match(/player\.src\s*=\s*["']([^"']+)["']/);
+                    if (match) {
+                        playerUrl = match[1];
+                        break;
+                    }
+                }
+            }
+
+            return {
+                title: doc.querySelector('.b-post__title h1')?.textContent?.trim() || '',
+                description: doc.querySelector('.b-post__description_text')?.textContent?.trim() || '',
+                year: doc.querySelector('.b-post__info .year')?.textContent?.trim() || '',
+                rating: doc.querySelector('.b-post__rating .rating_imdb')?.textContent?.trim() || '',
+                poster: doc.querySelector('.b-post__cover img')?.getAttribute('src') || '',
+                playerUrl: playerUrl
+            };
+        },
+
+        // Воспроизведение
+        play(element) {
+            if (!element.url) {
+                Lampa.Noty.show('Ошибка: нет ссылки на фильм');
+                return;
+            }
+
+            Lampa.Loading.start();
+
+            const api = new HDRezkaApi();
+            api.getDetails(CONFIG.baseUrl + element.url, (html) => {
+                Lampa.Loading.stop();
+
+                const details = this.parseDetails(html);
+
+                if (details.playerUrl) {
+                    Lampa.Player.playExternal(details.playerUrl, {
+                        title: details.title || element.title,
+                        poster: details.poster || element.poster
+                    });
+                } else {
+                    // Если не нашли плеер — открываем страницу в браузере
+                    Lampa.Noty.show('Открываем страницу фильма');
+                    window.open(CONFIG.baseUrl + element.url, '_blank');
+                }
+            }, (err) => {
+                Lampa.Loading.stop();
+                Lampa.Noty.show('Ошибка загрузки: ' + err);
+            });
+        },
+
+        // Показать результаты в виде списка
+        showResults(results, title) {
+            if (!results || results.length === 0) {
+                Lampa.Noty.show('Ничего не найдено');
+                return;
+            }
+
+            const items = results.map(item => ({
+                title: item.title,
+                subtitle: item.year || '',
+                image: item.poster,
+                onClick: () => {
+                    Utils.play(item);
+                }
+            }));
+
+            Lampa.Select.show({
+                title: title || 'Результаты поиска',
+                items: items,
+                onBack: () => {
+                    Lampa.Controller.toggle('content');
+                }
+            });
+        }
+    };
+
+    // ============================================================
+    // 6. КОМПОНЕНТ ГЛАВНОЙ СТРАНИЦЫ
+    // ============================================================
+    function HDRezkaMain(object) {
+        const comp = new Lampa.InteractionMain(object);
+
+        comp.create = function() {
+            this.activity.loader(true);
+
+            const api = new HDRezkaApi();
+
+            // Загружаем главную страницу HDRezka
+            api.getCategory('', 1, (html) => {
+                const results = Utils.parseResults(html);
+
+                const data = {
+                    results: results,
+                    total_pages: 50,
+                    collection: true,
+                    line_type: 'none',
+                    card_events: {
+                        onEnter: (card, element) => {
+                            Utils.play(element);
+                        }
+                    }
+                };
+
+                this.build(data);
+                this.activity.loader(false);
+
+            }, (err) => {
+                this.empty(err);
+            });
+        };
+
+        comp.empty = function(er) {
+            const empty = new Lampa.Empty({
+                descr: typeof er == 'string' ? er : Lampa.Lang.translate('empty_text_two')
+            });
+            this.activity.render().find('.activity__body > div')[0].appendChild(empty.render(true));
+            this.start = empty.start.bind(empty);
+            this.activity.loader(false);
+            this.activity.toggle();
+        };
+
+        return comp;
+    }
+
+    // ============================================================
+    // 7. КОМПОНЕНТ КАТЕГОРИИ/ПОИСКА
+    // ============================================================
+    function HDRezkaView(object) {
+        const comp = new Lampa.InteractionCategory(object);
+
+        comp.create = function() {
+            this.activity.loader(true);
+
+            const api = new HDRezkaApi();
+
+            // Определяем, что загружаем: поиск или категорию
+            const isSearch = object.url && object.url.includes('search=');
+            const loadFn = isSearch ? api.search.bind(api) : api.getCategory.bind(api);
+
+            const params = isSearch
+                ? [decodeURIComponent(object.url.split('search=')[1]), object.page || 1]
+                : [object.url, object.page || 1];
+
+            loadFn(...params, (html) => {
+                const results = Utils.parseResults(html);
+
+                const data = {
+                    results: results,
+                    total_pages: 50,
+                    collection: true,
+                    line_type: 'none',
+                    card_events: {
+                        onEnter: (card, element) => {
+                            Utils.play(element);
+                        }
+                    }
+                };
+
+                this.build(data);
+                this.activity.loader(false);
+
+                // Добавляем кнопку фильтра (поиск)
+                this.render().find('.head__actions').append(`
+                    <div class="head__action head__settings selector" data-action="hdrezka_search">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;">
+                            <circle cx="11" cy="11" r="8"/>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        </svg>
+                    </div>
+                `);
+
+                // Обработчик поиска
+                this.render().find('[data-action="hdrezka_search"]').on('hover:enter', () => {
+                    Lampa.Input.edit({
+                        title: 'Поиск на HDRezka',
+                        value: '',
+                        free: true,
+                        nosave: true
+                    }, (value) => {
+                        if (value) {
+                            Lampa.Activity.push({
+                                url: 'search=' + encodeURIComponent(value),
+                                title: 'Поиск: ' + value,
+                                component: 'hdrezka_view',
+                                page: 1
+                            });
+                        }
+                        Lampa.Controller.toggle('content');
+                    });
+                });
+
+            }, (err) => {
+                this.empty(err);
+            });
+        };
+
+        comp.empty = function(er) {
+            const empty = new Lampa.Empty({
+                descr: typeof er == 'string' ? er : Lampa.Lang.translate('empty_text_two')
+            });
+            this.activity.render().find('.activity__body > div')[0].appendChild(empty.render(true));
+            this.start = empty.start.bind(empty);
+            this.activity.loader(false);
+            this.activity.toggle();
+        };
+
+        comp.nextPageReuest = function(object, resolve, reject) {
+            // Заглушка для пагинации
+            reject('Пагинация временно отключена');
+        };
+
+        return comp;
+    }
+
+    // ============================================================
+    // 8. РЕГИСТРАЦИЯ КОМПОНЕНТОВ И МЕНЮ
+    // ============================================================
+    function startPlugin() {
+        if (window['plugin_hdrezka_ready']) return;
+        window['plugin_hdrezka_ready'] = true;
+
+        console.log('[HDRezka] Плагин запускается');
+
+        // Регистрируем компоненты
+        Lampa.Component.add('hdrezka', HDRezkaMain);
+        Lampa.Component.add('hdrezka_view', HDRezkaView);
+
+        // ============================================================
+        // 9. ДОБАВЛЯЕМ ПУНКТ В ГЛАВНОЕ МЕНЮ
+        // ============================================================
+        function addMenuItem() {
+            const menuItem = $(`
+                <li class="menu__item selector">
+                    <div class="menu__ico">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;">
+                            <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+                            <line x1="8" y1="2" x2="8" y2="22"/>
+                            <line x1="16" y1="2" x2="16" y2="22"/>
+                            <line x1="2" y1="8" x2="22" y2="8"/>
+                            <line x1="2" y1="16" x2="22" y2="16"/>
+                        </svg>
+                    </div>
+                    <div class="menu__text">HDRezka</div>
+                </li>
+            `);
+
+            menuItem.on('hover:enter', function() {
+                // Открываем главную страницу HDRezka
+                Lampa.Activity.push({
+                    url: '',
+                    title: 'HDRezka',
+                    component: 'hdrezka',
+                    page: 1
+                });
+            });
+
+            // Добавляем в конец меню
+            $('.menu .menu__list').eq(0).append(menuItem);
+            console.log('[HDRezka] Пункт меню добавлен');
+        }
+
+        // ============================================================
+        // 10. ДОБАВЛЯЕМ НАСТРОЙКИ
+        // ============================================================
+        function addSettings() {
+            if (window.hdrezka_settings_added) return;
+            window.hdrezka_settings_added = true;
+
+            Lampa.SettingsApi.addComponent({
+                component: 'hdrezka',
+                name: 'HDRezka (Amnezia)',
+                icon: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:24px;height:24px;">
+                    <rect x="2" y="2" width="20" height="20" rx="2.18"/>
+                    <line x1="8" y1="2" x2="8" y2="22"/>
+                    <line x1="16" y1="2" x2="16" y2="22"/>
+                    <line x1="2" y1="8" x2="22" y2="8"/>
+                    <line x1="2" y1="16" x2="22" y2="16"/>
+                </svg>`
+            });
+
             Lampa.SettingsApi.addParam({
-                component: 'plugin_settings',
+                component: 'hdrezka',
                 param: {
                     name: 'hdrezka_config',
                     type: 'textarea',
                     default: '',
-                    placeholder: 'Вставьте конфиг AmneziaWG 1.5'
+                    placeholder: 'Вставьте ваш AmneziaWG 1.5 конфиг...'
                 },
                 field: {
-                    name: 'AmneziaWG Конфиг для HDRezka',
-                    description: 'Полный конфиг для подключения к серверам'
+                    name: 'AmneziaWG Конфиг',
+                    description: 'Полный конфиг для подключения к серверам Amnezia'
                 },
                 onChange: (value) => {
                     Store.set('config', value);
                     console.log('[HDRezka] Конфиг сохранён');
                 }
             });
+
+            Lampa.SettingsApi.addParam({
+                component: 'hdrezka',
+                param: {
+                    name: 'hdrezka_enabled',
+                    type: 'trigger',
+                    default: true
+                },
+                field: {
+                    name: 'Включить HDRezka',
+                    description: 'Показывать HDRezka в меню'
+                },
+                onChange: (value) => {
+                    Store.set('enabled', value === 'true');
+                    const menuItem = $('.menu .menu__list').find('.menu__text:contains("HDRezka")').closest('.menu__item');
+                    if (value === 'true') {
+                        menuItem.show();
+                    } else {
+                        menuItem.hide();
+                    }
+                }
+            });
+
+            console.log('[HDRezka] Настройки добавлены');
+        }
+
+        // ============================================================
+        // 11. СТАРТ
+        // ============================================================
+        if (window.appready) {
+            addMenuItem();
+            addSettings();
         } else {
-            console.log('[HDRezka] Lampa.SettingsApi не найдена. Настройки через localStorage');
+            Lampa.Listener.follow('app', function(e) {
+                if (e.type === 'ready') {
+                    addMenuItem();
+                    addSettings();
+                }
+            });
         }
-    }
-
-    // ============================================================
-    // 10. ИНИЦИАЛИЗАЦИЯ
-    // ============================================================
-    function init() {
-        console.log('[HDRezka] Инициализация...');
-
-        // Добавляем настройки
-        addSettings();
-
-        // Добавляем кнопку, если карточка открыта
-        if ($('.full-start').length) {
-            setTimeout(addHDRezkaButton, 100);
-        }
-
-        // Следим за появлением карточки
-        var observer = new MutationObserver(function() {
-            if ($('.full-start').length) {
-                setTimeout(addHDRezkaButton, 100);
-            }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
 
         console.log('[HDRezka] Плагин готов');
     }
 
     // ============================================================
-    // 11. СТАРТ
+    // 12. ЗАПУСК
     // ============================================================
-    if (window.Lampa) {
-        // Ждём готовности Lampa
-        Lampa.Listener.follow('app', function(e) {
-            if (e.type === 'ready') {
-                init();
-            }
-        });
-    } else {
-        // Если Lampa ещё не загружена — ждём
-        document.addEventListener('DOMContentLoaded', function() {
-            setTimeout(init, 2000);
-        });
+    // Проверяем, не загружен ли уже плагин
+    if (!window['plugin_hdrezka_ready']) {
+        startPlugin();
     }
 
 })();
