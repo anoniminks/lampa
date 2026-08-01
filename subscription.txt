@@ -1,0 +1,8 @@
+#profile-title: SecureVPN PREMIUM
+#profile-update-interval: 6
+#support-url: https://t.me/securevpn_support
+#announce: 🎉 Действует скидка 20% на продление!
+#subscription-userinfo: upload=0; download=2153701362; total=100000000000; expire=1790951622
+#routing-enable: 1
+#subscription-autoconnect: 1
+#subscription-autoconnect-type: lowestdelay
