@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Подписка VPN</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🌐 Подписка VPN</h1>
+        
+        <!-- Настройки из subscription.txt -->
+        <div id="settings" class="settings">
+            <div class="loading">Загрузка настроек...</div>
+        </div>
+        
+        <!-- Сервера из servers.json -->
+        <h2>🖥️ Сервера</h2>
+        <div id="servers" class="servers">
+            <div class="loading">Загрузка серверов...</div>
+        </div>
+        
+        <button class="copy-btn" onclick="copyAll()">📋 Скопировать ссылку подписки</button>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
