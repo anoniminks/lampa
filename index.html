@@ -3,29 +3,475 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Подписка</title>
+    <title>Подписка VPN</title>
     <style>
-        body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }
-        .card { background: #f0f0f0; padding: 12px 16px; margin: 8px 0; border-radius: 8px; }
-        .server { border-bottom: 1px solid #ddd; padding: 12px 0; }
-        .online { color: green; }
-        .tag { background: #007bff; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
-        button { padding: 12px 24px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; }
-        button:hover { background: #0056b3; }
-        .loading { color: #888; }
-        .protocol { background: #e9ecef; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        body { font-family: system-ui, sans-serif; padding: 20px; max-width: 700px; margin: 0 auto; background: #f5f7fa; }
+        .header { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        .server { background: white; padding: 15px 20px; margin: 8px 0; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); display: flex; justify-content: space-between; align-items: center; }
+        .server:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+        .server .name { font-weight: 600; }
+        .server .address { color: #666; font-size: 14px; }
+        .server .protocol { background: #e9ecef; padding: 2px 10px; border-radius: 12px; font-size: 12px; }
+        .badge { background: #4CAF50; color: white; padding: 2px 12px; border-radius: 12px; font-size: 12px; }
+        .copy-btn { background: #4CAF50; color: white; border: none; padding: 14px 28px; border-radius: 8px; font-size: 16px; cursor: pointer; width: 100%; margin-top: 20px; }
+        .copy-btn:hover { background: #45a049; }
+        .loading { text-align: center; padding: 40px; color: #888; }
+        .sub-name { font-size: 24px; font-weight: 700; color: #1a1a2e; }
+        .sub-info { color: #666; font-size: 14px; }
+        .server-count { background: #e9ecef; padding: 4px 12px; border-radius: 20px; font-size: 14px; }
+        .server .tag { font-size: 11px; color: #888; }
     </style>
 </head>
 <body>
-    <h1>📋 Подписка</h1>
-    <div id="info"><div class="loading">Загрузка...</div></div>
-    
-    <h2>🖥️ Сервера</h2>
-    <div id="servers"><div class="loading">Загрузка...</div></div>
-    
-    <br>
-    <button onclick="copyLink()">📋 Скопировать ссылку</button>
 
-    <script src="script.js"></script>
+<div class="header">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <div class="sub-name" id="subName">🌐 Загрузка...</div>
+            <div class="sub-info" id="subInfo">Подписка VPN</div>
+        </div>
+        <span class="server-count" id="serverCount">0 серверов</span>
+    </div>
+</div>
+
+<div id="serversList">
+    <div class="loading">⏳ Загрузка серверов...</div>
+</div>
+
+<button class="copy-btn" onclick="copySubscriptionLink()">📋 Скопировать ссылку подписки</button>
+
+<script>
+// ====== ВАШ JSON С СЕРВЕРАМИ ======
+const config = {
+  "remarks": "🇫🇲 ОБХОД³ | Белые списки",
+  "outbounds": [
+    {
+      "tag": "htw-001",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "84.201.178.50",
+            "port": 443,
+            "users": [
+              {
+                "id": "94d2d711-76e5-4d82-a3c9-4f06fd5558c8",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "ads.x5.ru",
+          "fingerprint": "firefox",
+          "publicKey": "bhNtT6HH8xLNkAkX_v8G35fi9I3opILaSQmTVMvxOCo",
+          "shortId": "825d392c67e4"
+        }
+      }
+    },
+    {
+      "tag": "htw-002",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "94.126.206.41",
+            "port": 443,
+            "users": [
+              {
+                "id": "35699c54-9188-4f43-972e-e8e42dbb104e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "apple.com",
+          "fingerprint": "ios",
+          "publicKey": "6ycuxfrEPsqE9eXZ5_Osbnx4g6hXWmkc8pFuAJkJ4jY",
+          "shortId": ""
+        }
+      }
+    },
+    {
+      "tag": "htw-003",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "94.126.205.65",
+            "port": 443,
+            "users": [
+              {
+                "id": "35699c54-9188-4f43-972e-e8e42dbb104e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "apple.com",
+          "fingerprint": "qq",
+          "publicKey": "M9_R2DX7bxoMJpkF4RcyJ0oJ8ZuGsxWrjuREKi6Ol0w",
+          "shortId": ""
+        }
+      }
+    },
+    {
+      "tag": "htw-004",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "94.126.204.43",
+            "port": 443,
+            "users": [
+              {
+                "id": "35699c54-9188-4f43-972e-e8e42dbb104e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "apple.com",
+          "fingerprint": "firefox",
+          "publicKey": "m_Xgh5XeqmN9JaDxkct4yTup2YPVxCV5fGnUnMZ3pWE",
+          "shortId": ""
+        },
+        "tcpSettings": {}
+      }
+    },
+    {
+      "tag": "htw-005",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "94.126.204.159",
+            "port": 443,
+            "users": [
+              {
+                "id": "35699c54-9188-4f43-972e-e8e42dbb104e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "apple.com",
+          "fingerprint": "firefox",
+          "publicKey": "6ycuxfrEPsqE9eXZ5_Osbnx4g6hXWmkc8pFuAJkJ4jY",
+          "shortId": ""
+        },
+        "tcpSettings": {}
+      }
+    },
+    {
+      "tag": "htw-006",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "212.233.123.185",
+            "port": 8443,
+            "users": [
+              {
+                "id": "c46e2605-be24-4555-b7db-0fc6773ad004",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "rus07.routex-cloud.space",
+          "fingerprint": "firefox",
+          "publicKey": "N20oGhwfXOP-H9nuvWlJG_UNHwxWWhrTAV-KsjgZFDA",
+          "shortId": "23697e"
+        },
+        "xhttpSettings": {
+          "path": "/api/uploadFile/",
+          "host": "rus07.routex-cloud.space",
+          "mode": "auto"
+        }
+      }
+    },
+    {
+      "tag": "htw-007",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "213.219.212.24",
+            "port": 443,
+            "users": [
+              {
+                "id": "39c24c2d-c185-4fc4-8631-3645d46bbb76",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "pro-ru-213.emrata.top",
+          "fingerprint": "firefox",
+          "publicKey": "AAZjVvbC7AwPKot_1ygO5VMpN7XYifCA7lG0RNR5sEk",
+          "shortId": ""
+        },
+        "rawSettings": {}
+      }
+    },
+    {
+      "tag": "htw-008",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "213.219.212.14",
+            "port": 443,
+            "users": [
+              {
+                "id": "39c24c2d-c185-4fc4-8631-3645d46bbb76",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "eh.vk.ru",
+          "fingerprint": "firefox",
+          "publicKey": "AAZjVvbC7AwPKot_1ygO5VMpN7XYifCA7lG0RNR5sEk",
+          "shortId": ""
+        },
+        "rawSettings": {}
+      }
+    },
+    {
+      "tag": "htw-009",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "217.16.29.32",
+            "port": 27522,
+            "users": [
+              {
+                "id": "fde4bf10-efcf-4ce2-b1f8-a48edb7c118d",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "grpc",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "m1.vk.com",
+          "fingerprint": "chrome",
+          "publicKey": "M7VLiYkk3lEwAM012Lc9EXaIJ9lvX_Az6GCb9klTh3c",
+          "shortId": "0767879bfa"
+        },
+        "grpcSettings": {
+          "serviceName": "grpc"
+        }
+      }
+    },
+    {
+      "tag": "htw-010",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "213.219.212.30",
+            "port": 443,
+            "users": [
+              {
+                "id": "9ea12baf-29ae-493e-a9f0-2916ff22448e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "pro-ru-213.emrata.top",
+          "fingerprint": "safari",
+          "publicKey": "AAZjVvbC7AwPKot_1ygO5VMpN7XYifCA7lG0RNR5sEk",
+          "shortId": ""
+        },
+        "rawSettings": {}
+      }
+    }
+  ]
+};
+
+// ====== КОД ======
+
+function getServers() {
+    return config.outbounds.filter(o => 
+        o.protocol === 'vless' || o.protocol === 'vmess' || o.protocol === 'trojan'
+    );
+}
+
+function renderServers() {
+    const container = document.getElementById('serversList');
+    container.innerHTML = '';
+    
+    const servers = getServers();
+    
+    servers.forEach(s => {
+        const address = s.settings?.vnext?.[0]?.address || '—';
+        const port = s.settings?.vnext?.[0]?.port || '—';
+        const network = s.streamSettings?.network || 'tcp';
+        const security = s.streamSettings?.security || 'none';
+        const tag = s.tag || 'server';
+        
+        const div = document.createElement('div');
+        div.className = 'server';
+        div.innerHTML = `
+            <div>
+                <div class="name">${tag}</div>
+                <div class="address">${address}:${port}</div>
+                <div class="tag">${network} | ${security}</div>
+            </div>
+            <div>
+                <span class="protocol">${s.protocol}</span>
+                ${security === 'reality' ? ' <span class="badge">Reality</span>' : ''}
+            </div>
+        `;
+        container.appendChild(div);
+    });
+    
+    document.getElementById('subName').textContent = `🌐 ${config.remarks || 'Подписка'}`;
+    document.getElementById('subInfo').textContent = `${servers.length} серверов доступно`;
+    document.getElementById('serverCount').textContent = `${servers.length} серверов`;
+}
+
+function generateVlessLink(server) {
+    const vnext = server.settings?.vnext?.[0];
+    if (!vnext) return '';
+    
+    const user = vnext.users?.[0];
+    if (!user) return '';
+    
+    const stream = server.streamSettings || {};
+    const reality = stream.realitySettings || {};
+    
+    const params = new URLSearchParams();
+    params.append('encryption', user.encryption || 'none');
+    if (user.flow) params.append('flow', user.flow);
+    if (stream.security) params.append('security', stream.security);
+    if (reality.serverName) params.append('sni', reality.serverName);
+    if (reality.fingerprint) params.append('fp', reality.fingerprint);
+    if (reality.publicKey) params.append('pbk', reality.publicKey);
+    if (reality.shortId) params.append('sid', reality.shortId);
+    
+    if (stream.network === 'xhttp' && stream.xhttpSettings) {
+        params.append('type', 'xhttp');
+        params.append('path', stream.xhttpSettings.path || '');
+        params.append('host', stream.xhttpSettings.host || '');
+    } else if (stream.network === 'grpc' && stream.grpcSettings) {
+        params.append('type', 'grpc');
+        params.append('serviceName', stream.grpcSettings.serviceName || '');
+    } else if (stream.network === 'tcp' || stream.network === 'raw') {
+        params.append('type', 'tcp');
+    }
+    
+    const cleanParams = new URLSearchParams();
+    for (const [key, value] of params) {
+        if (value) cleanParams.append(key, value);
+    }
+    
+    const query = cleanParams.toString();
+    const hash = server.tag || 'server';
+    
+    return `vless://${user.id}@${vnext.address}:${vnext.port}?${query}#${encodeURIComponent(hash)}`;
+}
+
+function generateSubscription() {
+    const servers = getServers();
+    const links = servers.map(s => generateVlessLink(s)).filter(l => l);
+    const text = links.join('\n');
+    return btoa(text);
+}
+
+function copySubscriptionLink() {
+    const baseUrl = window.location.href.split('?')[0];
+    const subLink = `${baseUrl}?sub=1`;
+    
+    navigator.clipboard.writeText(subLink)
+        .then(() => alert('✅ Ссылка подписки скопирована!\n\nВставьте её в приложение (Happ, v2rayN, Shadowrocket)'))
+        .catch(() => {
+            const input = document.createElement('input');
+            input.value = subLink;
+            document.body.appendChild(input);
+            input.select();
+            document.execCommand('copy');
+            document.body.removeChild(input);
+            alert('✅ Ссылка подписки скопирована!');
+        });
+}
+
+function handleSubscriptionRequest() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('sub') === '1') {
+        const subscription = generateSubscription();
+        document.body.innerHTML = subscription;
+        document.body.style.whiteSpace = 'pre-wrap';
+        document.body.style.wordBreak = 'break-all';
+        return true;
+    }
+    return false;
+}
+
+if (!handleSubscriptionRequest()) {
+    renderServers();
+}
+</script>
+
 </body>
-</html>
+    </html>
