@@ -1,84 +1,80 @@
-let subscriptionSettings = {};
-let serversList = [];
+let config = null;
 
-async function loadData() {
-    try {
-        // Загружаем subscription.txt
-        const settingsResp = await fetch('subscription.txt?_=' + Date.now());
-        const settingsText = await settingsResp.text();
-        
-        // Парсим настройки
-        const settingsContainer = document.getElementById('settings');
-        settingsContainer.innerHTML = '';
-        
-        settingsText.split('\n').forEach(line => {
-            line = line.trim();
-            if (line.startsWith('#')) {
-                const match = line.match(/^#([^:]+):\s*(.*)$/);
-                if (match) {
-                    const key = match[1].trim();
-                    const value = match[2].trim();
-                    subscriptionSettings[key] = value;
-                    
-                    const div = document.createElement('div');
-                    div.className = 'setting';
-                    div.innerHTML = `
-                        <span class="key">${key}</span>
-                        <span class="value">${value}</span>
-                    `;
-                    settingsContainer.appendChild(div);
-                }
-            }
+// Загружаем при открытии
+loadConfig();
+
+function loadConfig() {
+    fetch('config.json?_=' + Date.now())
+        .then(res => res.json())
+        .then(data => {
+            config = data;
+            showInfo(data);
+            showServers(data);
+        })
+        .catch(() => {
+            document.getElementById('info').innerHTML = '<div class="card">❌ Ошибка загрузки config.json</div>';
+            document.getElementById('servers').innerHTML = '<div class="card">❌ Ошибка загрузки</div>';
         });
-        
-        // Загружаем servers.json
-        const serversResp = await fetch('servers.json?_=' + Date.now());
-        serversList = await serversResp.json();
-        
-        const serversContainer = document.getElementById('servers');
-        serversContainer.innerHTML = '';
-        
-        serversList.forEach(server => {
-            const div = document.createElement('div');
-            div.className = 'server';
-            div.innerHTML = `
-                <span class="name">${server.name}</span>
-                <span class="host">${server.host}:${server.port}</span>
-                <span class="status ${server.status}">${server.status}</span>
-                <span class="ping">${server.ping}ms</span>
-                <span class="load">${server.load}%</span>
-            `;
-            serversContainer.appendChild(div);
-        });
-        
-        // Убираем загрузку
-        document.querySelectorAll('.loading').forEach(el => el.remove());
-        
-    } catch (error) {
-        console.error('Ошибка:', error);
-        document.getElementById('settings').innerHTML = '<div class="error">❌ Ошибка загрузки</div>';
-    }
 }
 
-function copyAll() {
-    // Собираем URL подписки
-    let url = subscriptionSettings['subscription-url'] || 'https://ваша-панель.домен/subscription/token';
+function showInfo(data) {
+    const container = document.getElementById('info');
+    let html = `<div class="card"><b>📌 Название:</b> ${data.remarks || 'Без названия'}</div>`;
     
-    // Добавляем параметры
-    const params = new URLSearchParams();
-    Object.entries(subscriptionSettings).forEach(([key, value]) => {
-        if (key !== 'subscription-url') {
-            params.append(key, value);
-        }
+    if (data.dns && data.dns.servers) {
+        html += `<div class="card"><b>🌐 DNS:</b> ${data.dns.servers.join(', ')}</div>`;
+    }
+    
+    container.innerHTML = html;
+}
+
+function showServers(data) {
+    const container = document.getElementById('servers');
+    
+    if (!data.outbounds) {
+        container.innerHTML = '<div class="card">Нет серверов</div>';
+        return;
+    }
+    
+    // Фильтруем только VLESS/Vmess/Trojan сервера
+    const servers = data.outbounds.filter(o => 
+        o.protocol === 'vless' || o.protocol === 'vmess' || o.protocol === 'trojan'
+    );
+    
+    if (servers.length === 0) {
+        container.innerHTML = '<div class="card">Нет активных серверов</div>';
+        return;
+    }
+    
+    let html = '';
+    servers.forEach((s, i) => {
+        const address = s.settings?.vnext?.[0]?.address || '—';
+        const port = s.settings?.vnext?.[0]?.port || '—';
+        const network = s.streamSettings?.network || 'tcp';
+        const security = s.streamSettings?.security || 'none';
+        
+        html += `
+            <div class="server">
+                <b>#${i+1} ${s.tag || 'Без имени'}</b><br>
+                📡 ${address}:${port} &nbsp;
+                <span class="protocol">${network}</span> &nbsp;
+                <span class="protocol">${security}</span>
+                ${s.streamSettings?.realitySettings ? ' 🔒 Reality' : ''}
+                ${s.streamSettings?.tlsSettings ? ' 🔒 TLS' : ''}
+            </div>
+        `;
     });
     
-    const fullUrl = url + (url.includes('?') ? '&' : '?') + params.toString();
-    
-    navigator.clipboard.writeText(fullUrl)
+    container.innerHTML = html;
+}
+
+function copyLink() {
+    const url = window.location.href;
+    navigator.clipboard.writeText(url)
         .then(() => alert('✅ Ссылка скопирована!'))
         .catch(() => {
-            const input = document.createElement('textarea');
-            input.value = fullUrl;
+            const input = document.createElement('input');
+            input.value = url;
             document.body.appendChild(input);
             input.select();
             document.execCommand('copy');
@@ -86,5 +82,3 @@ function copyAll() {
             alert('✅ Ссылка скопирована!');
         });
 }
-
-document.addEventListener('DOMContentLoaded', loadData);
