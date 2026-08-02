@@ -1,0 +1,370 @@
+#profile-title: Моя подписка
+#profile-update-interval: 1
+{
+  "remarks": "🇫🇲 ОБХОД¹ | Белые списки",
+  "dns": {
+    "servers": [
+      "1.1.1.1",
+      "1.0.0.1"
+    ],
+    "queryStrategy": "UseIP"
+  },
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "domain": [
+          "domain:2ip.ru",
+          "domain:2ip.io",
+          "habr.com",
+          "4pda.to",
+          "4pda.ru",
+          "kemono.su",
+          "jut.su",
+          "kara.su",
+          "theins.ru",
+          "tvrain.ru",
+          "echo.msk.ru",
+          "the-village.ru",
+          "snob.ru",
+          "novayagazeta.ru",
+          "moscowtimes.ru"
+        ],
+        "balancerTag": "Yandex_Bal"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "full:localhost",
+          "full:localhost.localdomain",
+          "domain:local",
+          "domain:localdomain",
+          "domain:lan",
+          "domain:internal"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "ip": [
+          "127.0.0.0/8",
+          "10.0.0.0/8",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "169.254.0.0/16",
+          "::1/128",
+          "fc00::/7",
+          "fe80::/10"
+        ],
+        "type": "field",
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:1.mtproto.store",
+          "domain:2.mtproto.store",
+          "domain:3.mtproto.store",
+          "domain:4.mtproto.store",
+          "domain:5.mtproto.store",
+          "domain:6.mtproto.store",
+          "domain:7.mtproto.store",
+          "domain:8.mtproto.store",
+          "domain:9.mtproto.store"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "protocol": [
+          "bittorrent"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "ip": [
+          "geoip:private"
+        ],
+        "type": "field",
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "domain:mtalk.google.com",
+          "domain:push.apple.com",
+          "domain:api.push.apple.com",
+          "domain:push-apple.com.akadns.net",
+          "domain:*-courier.push.apple.com"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "ip": [
+          "17.0.0.0/8"
+        ],
+        "type": "field",
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "domain": [
+          "geosite:private",
+          "geosite:category-ru",
+          "geoip:ru",
+          "geoip:private"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": [
+          "geoip:ru",
+          "geoip:private"
+        ],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "network": "tcp,udp",
+        "balancerTag": "Yandex_Bal"
+      }
+    ],
+    "balancers": [
+      {
+        "tag": "Yandex_Bal",
+        "selector": [
+          "hyandex"
+        ],
+        "strategy": {
+          "type": "leastLoad",
+          "settings": {
+            "maxRTT": "1s",
+            "expected": 5,
+            "baselines": [
+              "1s"
+            ],
+            "tolerance": 0.01
+          }
+        }
+      }
+    ],
+    "domainMatcher": "hybrid",
+    "domainStrategy": "IPIfNonMatch"
+  },
+  "inbounds": [
+    {
+      "tag": "socks",
+      "port": 10808,
+      "listen": "127.0.0.1",
+      "protocol": "socks",
+      "settings": {
+        "udp": true,
+        "auth": "noauth"
+      },
+      "sniffing": {
+        "enabled": true,
+        "routeOnly": false,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    },
+    {
+      "tag": "http",
+      "port": 10809,
+      "listen": "127.0.0.1",
+      "protocol": "http",
+      "settings": {
+        "allowTransparent": false
+      },
+      "sniffing": {
+        "enabled": true,
+        "routeOnly": false,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "hyandex-001",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "94.126.206.117",
+            "port": 443,
+            "users": [
+              {
+                "id": "35699c54-9188-4f43-972e-e8e42dbb104e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "serverName": "apple.com",
+          "fingerprint": "firefox",
+          "publicKey": "m_Xgh5XeqmN9JaDxkct4yTup2YPVxCV5fGnUnMZ3pWE",
+          "shortId": ""
+        },
+        "tcpSettings": {}
+      }
+    },
+    {
+      "tag": "hyandex-002",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "94.126.204.43",
+            "port": 443,
+            "users": [
+              {
+                "id": "35699c54-9188-4f43-972e-e8e42dbb104e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "serverName": "apple.com",
+          "fingerprint": "chrome",
+          "publicKey": "m_Xgh5XeqmN9JaDxkct4yTup2YPVxCV5fGnUnMZ3pWE",
+          "shortId": ""
+        },
+        "rawSettings": {}
+      }
+    },
+    {
+      "tag": "hyandex-003",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "94.139.250.34",
+            "port": 443,
+            "users": [
+              {
+                "id": "35699c54-9188-4f43-972e-e8e42dbb104e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "raw",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "serverName": "apple.com",
+          "fingerprint": "ios",
+          "publicKey": "6ycuxfrEPsqE9eXZ5_Osbnx4g6hXWmkc8pFuAJkJ4jY",
+          "shortId": ""
+        },
+        "rawSettings": {}
+      }
+    },
+    {
+      "tag": "hyandex-004",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "94.139.251.189",
+            "port": 443,
+            "users": [
+              {
+                "id": "35699c54-9188-4f43-972e-e8e42dbb104e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "serverName": "apple.com",
+          "fingerprint": "firefox",
+          "publicKey": "m_Xgh5XeqmN9JaDxkct4yTup2YPVxCV5fGnUnMZ3pWE",
+          "shortId": ""
+        },
+        "tcpSettings": {}
+      }
+    },
+    {
+      "tag": "hyandex-005",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "94.139.251.9",
+            "port": 443,
+            "users": [
+              {
+                "id": "35699c54-9188-4f43-972e-e8e42dbb104e",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "serverName": "apple.com",
+          "fingerprint": "edge",
+          "publicKey": "m_Xgh5XeqmN9JaDxkct4yTup2YPVxCV5fGnUnMZ3pWE",
+          "shortId": ""
+        },
+        "tcpSettings": {}
+      }
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom"
+    },
+    {
+      "tag": "block",
+      "protocol": "blackhole"
+    }
+  ],
+  "burstObservatory": {
+    "pingConfig": {
+      "timeout": "3s",
+      "interval": "1m",
+      "sampling": 1,
+      "destination": "http://www.gstatic.com/generate_204",
+      "connectivity": ""
+    },
+    "subjectSelector": [
+      "hyandex"
+    ]
+  }
+}
